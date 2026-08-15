@@ -55,3 +55,8 @@ Detect the platform before choosing paths or install commands. Consider at least
 - Keep `to-do.md` organized with checkboxes and theme sections.
 - Prefer a `README.md` for scripts with install, usage, examples, troubleshooting, and platform notes.
 - When generating an environment stamp, commit `.folderstamp` only if explicitly requested.
+
+## Metadata output convention
+
+- Prefer storing generated metadata under `.meta/<tool-name>/` instead of cluttering the project root.
+- When migrating legacy root metadata files, preserve them by numbering old outputs before creating the next stamp.

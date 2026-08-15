@@ -8,6 +8,9 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 
 ### Added
 - Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul` e `ipfs`.
+- Alterado `save` para armazenar novos stamps em `.meta/folderstamp/` em vez de criar `.folderstamp` na raiz.
+- Adicionada migração automática de `.folderstamp` legado para `.meta/folderstamp/.folderstamp.1`, criando o próximo número disponível para novos stamps.
+- Adicionada tarefa para avaliar Iroh como alternativa Rust para gerar CIDv0 e CIDv1.
 - Adicionado instalador interativo para Kubo/IPFS e Gitoxide via GitHub Releases quando o usuário confirma no prompt.
 - Adicionado Gitoxide como opção padrão sugerida mesmo quando Git clássico já existe, sem exigir passos manuais em sessão interativa.
 - Adicionado suporte de portabilidade para BSD, macOS e Zircon/Fuchsia.

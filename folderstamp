@@ -386,6 +386,67 @@ stamp_path() {
     printf "%s" "$all" | sed 's/%/%%/g'
 }
 
+folderstamp_store_dir() {
+    echo ".meta/folderstamp"
+}
+
+legacy_folderstamp_path() {
+    echo ".folderstamp"
+}
+
+next_folderstamp_path() {
+    local store_dir="$1"
+    local max=0
+    local path name number
+
+    if [[ -f "$store_dir/.folderstamp" ]]; then
+        max=1
+    fi
+
+    for path in "$store_dir"/.folderstamp.*; do
+        [[ -e "$path" ]] || continue
+        name="${path##*/}"
+        number="${name##*.}"
+        if [[ "$number" =~ ^[0-9]+$ ]] && (( number > max )); then
+            max="$number"
+        fi
+    done
+
+    if (( max == 0 )); then
+        echo "$store_dir/.folderstamp"
+    else
+        echo "$store_dir/.folderstamp.$((max + 1))"
+    fi
+}
+
+prepare_folderstamp_output_path() {
+    local store_dir legacy_path next_path
+    store_dir="$(folderstamp_store_dir)"
+    legacy_path="$(legacy_folderstamp_path)"
+
+    mkdir -p "$store_dir"
+
+    if [[ -f "$legacy_path" ]]; then
+        if [[ ! -e "$store_dir/.folderstamp.1" ]]; then
+            mv "$legacy_path" "$store_dir/.folderstamp.1"
+        else
+            mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
+        fi
+    fi
+
+    next_path="$(next_folderstamp_path "$store_dir")"
+    echo "$next_path"
+}
+
+save_folderstamp() {
+    local output_path
+    output_path="$(prepare_folderstamp_output_path)"
+
+    echo "🤓📝 Working..."
+    echo "Saving folderstamp to: $output_path"
+    display "$1" "$2" > "$output_path"
+}
+
 function display {
 rocketlaunch_dir=`pwd` #from https://unix.stackexchange.com/a/52919/470623
 echo "This folder: $rocketlaunch_dir"
@@ -426,8 +487,7 @@ fi
 }
 
 if [ "$1" = "save" ];then
-   echo "🤓📝 Working..."
-   display "$1" "$2" > .folderstamp
+   save_folderstamp "$1" "$2"
 fi
 if [ "$1" = "display" ];then
    display "$1" "$2"
