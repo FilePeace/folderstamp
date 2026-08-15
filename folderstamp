@@ -1,16 +1,514 @@
 #!/bin/bash -e
 
+FOLDERSTAMP_VERSION="r6"
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+platform_name() {
+    local uname_s uname_o
+    uname_s="$(uname -s 2>/dev/null || echo unknown)"
+    uname_o="$(uname -o 2>/dev/null || echo unknown)"
+
+    if [[ -n "${TERMUX_VERSION:-}" ]] || [[ "${PREFIX:-}" == *com.termux* ]] || [[ "$uname_o" == "Android" ]]; then
+        echo "Termux"
+    elif [[ "$uname_s" == CYGWIN* ]]; then
+        echo "Cygwin"
+    elif [[ "$uname_s" == "Redox" ]]; then
+        echo "RedoxOS"
+    elif [[ "$uname_s" == "Darwin" ]]; then
+        echo "macOS"
+    elif [[ "$uname_s" == *BSD ]]; then
+        echo "BSD"
+    elif [[ "$uname_s" == "Fuchsia" ]] || [[ "$uname_s" == "Zircon" ]]; then
+        echo "Zircon/Fuchsia"
+    else
+        echo "$uname_s"
+    fi
+}
+
+
+install_command_for() {
+    local package="$1"
+    local platform
+    platform="$(platform_name)"
+
+    case "$platform" in
+        Termux)
+            echo "pkg install $package"
+            ;;
+        Cygwin)
+            echo "Install the '$package' package with the Cygwin setup executable."
+            ;;
+        RedoxOS)
+            echo "pkg install $package"
+            ;;
+        macOS)
+            if command_exists brew; then
+                echo "brew install $package"
+            else
+                echo "Install '$package' with Homebrew, MacPorts, or the upstream project release."
+            fi
+            ;;
+        BSD)
+            if command_exists pkg; then
+                echo "pkg install $package"
+            elif command_exists pkg_add; then
+                echo "pkg_add $package"
+            else
+                echo "Install '$package' with your BSD package manager."
+            fi
+            ;;
+        Zircon/Fuchsia)
+            echo "Install '$package' with the Fuchsia package workflow for your image/build."
+            ;;
+        Linux)
+            if command_exists apt-get; then
+                echo "sudo apt-get update && sudo apt-get install -y $package"
+            elif command_exists dnf; then
+                echo "sudo dnf install -y $package"
+            elif command_exists pacman; then
+                echo "sudo pacman -S --needed $package"
+            elif command_exists apk; then
+                echo "sudo apk add $package"
+            elif command_exists zypper; then
+                echo "sudo zypper install -y $package"
+            else
+                echo "Install '$package' with your distribution package manager."
+            fi
+            ;;
+        *)
+            echo "Install '$package' with the package manager for $(platform_name)."
+            ;;
+    esac
+}
+
+
+normalized_arch() {
+    local arch
+    arch="$(uname -m 2>/dev/null || echo unknown)"
+
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        armv7*|armv6*) echo "arm" ;;
+        *) echo "$arch" ;;
+    esac
+}
+
+github_os_token() {
+    case "$(platform_name)" in
+        Linux|Termux) echo "linux" ;;
+        macOS) echo "darwin" ;;
+        BSD) echo "freebsd" ;;
+        Cygwin) echo "windows" ;;
+        *) echo "" ;;
+    esac
+}
+
+install_bin_dir() {
+    if [[ -n "${PREFIX:-}" && -w "${PREFIX}/bin" ]]; then
+        echo "${PREFIX}/bin"
+    elif [[ -d "$HOME/.local/bin" || -w "$HOME" ]]; then
+        mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+        echo "$HOME/.local/bin"
+    else
+        echo "/usr/local/bin"
+    fi
+}
+
+install_release_asset() {
+    local repo="$1"
+    local label="$2"
+    local asset_regex="$3"
+    local bin_name="$4"
+    local os_token arch token url archive workdir dest
+
+    if ! command_exists curl; then
+        echo "Cannot auto-install $label: curl is missing."
+        echo "Suggested install: $(install_command_for curl)"
+        return 1
+    fi
+
+    if ! command_exists tar; then
+        echo "Cannot auto-install $label: tar is missing."
+        echo "Suggested install: $(install_command_for tar)"
+        return 1
+    fi
+
+    if ! command_exists python3; then
+        echo "Cannot auto-install $label safely: python3 is missing for GitHub release asset selection."
+        echo "Open instead: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    os_token="$(github_os_token)"
+    arch="$(normalized_arch)"
+    token="${os_token}-${arch}"
+
+    if [[ -z "$os_token" ]]; then
+        echo "Cannot auto-install $label on $(platform_name) yet. Open: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    url="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" | python3 -c '
+import json, re, sys
+os_token = sys.argv[1].lower()
+arch = sys.argv[2].lower()
+regex = re.compile(sys.argv[3], re.I)
+arch_aliases = {
+    "amd64": ["amd64", "x86_64"],
+    "arm64": ["arm64", "aarch64"],
+    "arm": ["arm", "armv7", "armv6"],
+}
+arches = arch_aliases.get(arch, [arch])
+data = json.load(sys.stdin)
+for asset in data.get("assets", []):
+    name = asset.get("name", "")
+    low = name.lower()
+    if os_token in low and any(a in low for a in arches) and regex.search(name):
+        print(asset.get("browser_download_url", ""))
+        break
+' "$os_token" "$arch" "$asset_regex")"
+
+    if [[ -z "$url" ]]; then
+        echo "No matching $label release asset found for $token."
+        echo "Open: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t folderstamp)"
+    archive="$workdir/asset.tar.gz"
+    dest="$(install_bin_dir)/$bin_name"
+
+    echo "Downloading $label from: $url"
+    curl -fL "$url" -o "$archive"
+    tar -xzf "$archive" -C "$workdir"
+
+    found="$(find "$workdir" -type f -name "$bin_name" -perm -u+x 2>/dev/null | head -n1)"
+    if [[ -z "$found" ]]; then
+        found="$(find "$workdir" -type f -name "$bin_name" 2>/dev/null | head -n1)"
+    fi
+
+    if [[ -z "$found" ]]; then
+        echo "Downloaded $label, but could not find $bin_name inside the archive."
+        echo "Workdir kept for inspection: $workdir"
+        return 1
+    fi
+
+    cp "$found" "$dest"
+    chmod +x "$dest"
+    echo "$label installed at $dest"
+}
+
+ask_yes_no() {
+    local question="$1"
+    local answer
+
+    if [[ ! -t 0 ]]; then
+        return 1
+    fi
+
+    printf "%s [Y/n] " "$question"
+    read -r answer
+    case "$answer" in
+        n|N|no|NO|No) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+offer_gitoxide_install() {
+    if ask_yes_no "Install Gitoxide/gix from GitHub Releases now?"; then
+        install_release_asset "GitoxideLabs/gitoxide" "Gitoxide" 'gitoxide.*(tar\.gz|tgz)$' "gix"
+    else
+        gitoxide_install_offer
+    fi
+}
+
+offer_kubo_install() {
+    if ask_yes_no "Install Kubo/IPFS from GitHub Releases now?"; then
+        install_release_asset "ipfs/kubo" "Kubo/IPFS" 'kubo.*(tar\.gz|tgz)$' "ipfs"
+    else
+        kubo_install_offer
+    fi
+}
+
+gitoxide_install_offer() {
+    cat <<'GITOXIDE_EOF'
+You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
+  https://github.com/GitoxideLabs/gitoxide/releases/latest
+Gitoxide usually provides the `gix` command; choose the asset for your OS/CPU architecture.
+GITOXIDE_EOF
+}
+
+check_git_tooling() {
+    if command_exists git; then
+        echo "Dependency OK: git ($(command -v git))"
+        if ! command_exists gix; then
+            echo "Gitoxide/gix not found; Gitoxide is the default optional VCS accelerator."
+            offer_gitoxide_install || true
+        fi
+        return 0
+    fi
+
+    if command_exists gix; then
+        echo "Dependency OK: gitoxide/gix ($(command -v gix))"
+        return 0
+    fi
+
+    echo "Dependency missing: git or gitoxide/gix"
+    echo "Suggested Git install: $(install_command_for git)"
+    offer_gitoxide_install || true
+    return 1
+}
+
+check_optional_dependency() {
+    local command_name="$1"
+    local package_name="${2:-$1}"
+
+    if command_exists "$command_name"; then
+        echo "Optional dependency OK: $command_name ($(command -v "$command_name"))"
+        return 0
+    fi
+
+    echo "Optional dependency missing: $command_name"
+    echo "Suggested install: $(install_command_for "$package_name")"
+    return 1
+}
+
+kubo_install_offer() {
+    cat <<'KUBO_EOF'
+Dependency notice: ipfs is not installed.
+Kubo is the reference IPFS implementation; you can download it from GitHub Releases:
+  https://github.com/ipfs/kubo/releases/latest
+Choose the release asset that matches your OS and CPU architecture, then run the install script shipped in the archive.
+Linux example after downloading the correct tarball:
+  tar -xzf kubo_*.tar.gz
+  cd kubo && sudo ./install.sh
+Termux users should install into $PREFIX/bin instead of relying on sudo.
+KUBO_EOF
+}
+
+check_dependency() {
+    local command_name="$1"
+    local package_name="${2:-$1}"
+
+    if command_exists "$command_name"; then
+        echo "Dependency OK: $command_name ($(command -v "$command_name"))"
+        return 0
+    fi
+
+    echo "Dependency missing: $command_name"
+
+    if [[ "$command_name" == "ipfs" ]]; then
+        offer_kubo_install || true
+    else
+        echo "Suggested install: $(install_command_for "$package_name")"
+    fi
+
+    return 1
+}
+
+print_dependency_report() {
+    echo "Dependency check:"
+    check_dependency stat coreutils || true
+    check_git_tooling || true
+    check_optional_dependency pijul pijul || true
+    check_dependency ipfs kubo || true
+}
+
+print_storage_details() {
+    local mount_source
+    mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')"
+
+    if [[ -n "$mount_source" ]] && command_exists lsblk; then
+        lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null \
+            | awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}'
+        return 0
+    fi
+
+    if command_exists df; then
+        df -hP . 2>/dev/null | awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}'
+        return 0
+    fi
+
+    echo "Storage Device: unavailable on this platform"
+}
+
+print_git_details() {
+    local current_branch first_remote_name first_remote_url
+
+    if [[ -d ".git" ]] && command_exists git; then
+        current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        first_remote_name="$(git remote 2>/dev/null | head -n1)"
+        echo "Current Git Branch: ${current_branch:-unknown}"
+
+        if [[ -n "$first_remote_name" ]]; then
+            first_remote_url="$(git remote get-url "$first_remote_name" 2>/dev/null || true)"
+            echo "First Git Remote: $first_remote_name - URL: ${first_remote_url:-unknown}"
+        else
+            echo "First Git Remote: none"
+        fi
+    elif [[ -d ".git" ]] && command_exists gix; then
+        echo "Git repository detected; Gitoxide available: $(command -v gix)"
+        echo "Current Git Branch: unavailable without classic git"
+    fi
+}
+
+print_pijul_details() {
+    local current_channel
+
+    if [[ -d ".pijul" ]] && command_exists pijul; then
+        current_channel="$(pijul channel 2>/dev/null | awk '/\*/ {print $2; exit}')"
+        echo "Current Pijul Channel: ${current_channel:-unknown}"
+    elif [[ -d ".pijul" ]]; then
+        echo "Pijul repository detected, but pijul is not installed."
+        echo "Suggested install: $(install_command_for pijul)"
+    fi
+}
+
+cid_v0_basic_python() {
+    local file="$1"
+
+    python3 - "$file" <<'PY_CID'
+import hashlib
+import sys
+
+ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def field_varint(number: int, value: int) -> bytes:
+    return varint((number << 3) | 0) + varint(value)
+
+
+def field_bytes(number: int, value: bytes) -> bytes:
+    return varint((number << 3) | 2) + varint(len(value)) + value
+
+
+def b58encode(data: bytes) -> str:
+    n = int.from_bytes(data, "big")
+    chars = []
+    while n:
+        n, rem = divmod(n, 58)
+        chars.append(ALPHABET[rem])
+    prefix = "1" * (len(data) - len(data.lstrip(b"\\0")))
+    return prefix + "".join(reversed(chars or ["1"]))
+
+path = sys.argv[1]
+with open(path, "rb") as handle:
+    payload = handle.read()
+
+# Basic CIDv0 study/implementation for a single-block UnixFS file:
+# UnixFS Data: Type=File(2), Data=<bytes>, filesize=<len>.
+unixfs_data = field_varint(1, 2) + field_bytes(2, payload) + field_varint(3, len(payload))
+# DAG-PB PBNode: Data=<UnixFS Data>. No links/chunking in this basic fallback.
+pb_node = field_bytes(1, unixfs_data)
+digest = hashlib.sha256(pb_node).digest()
+multihash = bytes([0x12, 0x20]) + digest
+print(b58encode(multihash))
+PY_CID
+}
+
+print_cid_hash() {
+    local file="$1"
+
+    if command_exists ipfs; then
+        echo "CID hash: $(ipfs add -q --only-hash "$file")"
+    elif command_exists python3; then
+        echo "CID hash (CIDv0 basic): $(cid_v0_basic_python "$file")"
+    else
+        echo "CID hash: unavailable (install Kubo/IPFS, Iroh, or python3 for the basic CIDv0 fallback)"
+    fi
+}
+
+stamp_path() {
+    local file="$1"
+    local all
+
+    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_cid_hash "$file"; printf '%s\n' '------------------------------')
+    printf "%s" "$all" | sed 's/%/%%/g'
+}
+
+folderstamp_store_dir() {
+    echo ".meta/folderstamp"
+}
+
+legacy_folderstamp_path() {
+    echo ".folderstamp"
+}
+
+next_folderstamp_path() {
+    local store_dir="$1"
+    local max=0
+    local path name number
+
+    if [[ -f "$store_dir/.folderstamp" ]]; then
+        max=1
+    fi
+
+    for path in "$store_dir"/.folderstamp.*; do
+        [[ -e "$path" ]] || continue
+        name="${path##*/}"
+        number="${name##*.}"
+        if [[ "$number" =~ ^[0-9]+$ ]] && (( number > max )); then
+            max="$number"
+        fi
+    done
+
+    if (( max == 0 )); then
+        echo "$store_dir/.folderstamp"
+    else
+        echo "$store_dir/.folderstamp.$((max + 1))"
+    fi
+}
+
+prepare_folderstamp_output_path() {
+    local store_dir legacy_path next_path
+    store_dir="$(folderstamp_store_dir)"
+    legacy_path="$(legacy_folderstamp_path)"
+
+    mkdir -p "$store_dir"
+
+    if [[ -f "$legacy_path" ]]; then
+        if [[ ! -e "$store_dir/.folderstamp.1" ]]; then
+            mv "$legacy_path" "$store_dir/.folderstamp.1"
+        else
+            mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
+        fi
+    fi
+
+    next_path="$(next_folderstamp_path "$store_dir")"
+    echo "$next_path"
+}
+
+save_folderstamp() {
+    local output_path
+    output_path="$(prepare_folderstamp_output_path)"
+
+    echo "🤓📝 Working..."
+    echo "Saving folderstamp to: $output_path"
+    display "$1" "$2" > "$output_path"
+}
+
 function display {
-#SCRIPTPATH="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
-#echo "This folder: $SCRIPTPATH"
 rocketlaunch_dir=`pwd` #from https://unix.stackexchange.com/a/52919/470623
 echo "This folder: $rocketlaunch_dir"
+echo "Platform: $(platform_name)"
 #-
-# Add storage device details
-storage_details=$(lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL | grep "$(df -P . | awk 'NR==2 {print $1}')" | sed 's/^/Storage Device: /')
-echo "$storage_details"
+# Add storage device details with fallbacks for Linux, Termux, Cygwin and RedoxOS.
+print_storage_details
 #-
-echo "folderstamp version: r5"
+echo "folderstamp version: $FOLDERSTAMP_VERSION"
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]; then
    method="Recursive"
 else
@@ -19,59 +517,22 @@ fi
 echo "Method: $method"  # Add this line to show the method used
 
 # Display current git branch and first git remote name with URL if .git folder is present
-# Check if .git folder exists
-if [ -d ".git" ]; then
-    current_branch=$(git rev-parse --abbrev-ref HEAD)
-    first_remote_name=$(git remote | head -n1)
-    first_remote_url=$(git remote get-url $first_remote_name)
-    echo "Current Git Branch: $current_branch"
-    echo "First Git Remote: $first_remote_name - URL: $first_remote_url"
-fi
+print_dependency_report
+print_git_details
+print_pijul_details
 
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
    then
 find . -type f -name '*' -print0 | while IFS= read -r -d '' file
 do
-    #name=$(basename "$file")
-    #path=$(dirname "$file")
-    # full_path=$(readlink -f "$file") # This only works on Linux
-    #full_path=$(echo "$PWD/${file#./}")
-    #extension=${name##*.}
-    #size_human_readable=$(ls -lh "$file" | awk -F' ' '{print $5}')
-    #size_in_bytes=$(stat -f "%z" "$file")
-    #creation_date=$(stat -f "%SB" "$file")
-    #last_access=$(stat -f "%Sa" "$file")
-    #last_modification=$(stat -f "%Sm" "$file")
-    #last_change=$(stat -f "%Sc" "$file")
-    #-to fix: all=$(echo -e "" && stat "$file" && if [ "$2" = "hash" ];then echo "IPFS hash: $(ipfs add -q --only-hash "$file")"; fi && echo -e "------------------------------")
-    all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-#-to fix:     if [ "$2" = "--hash" ];then
-#-to fix:        all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-#-to fix:     else
-#-to fix:        all=$(echo -e "" && stat "$file" && echo -e "------------------------------")
-#-to fix:     fi
-
-    #printf "[$file]:\n"
-    #printf "\tfile name:\t\t$name\n"
-    #printf "\tfile path:\t\t$path\n"
-    #printf "\tfull file path:\t\t$full_path\n"
-    #printf "\tfile extension:\t\t$extension\n"
-    #printf "\tfile size:\t\t$size_human_readable\n"
-    #printf "\tfile size in bytes:\t$size_in_bytes\n"
-    #printf "\tfile creation date:\t$creation_date\n"
-    #printf "\tlast file access:\t$last_access\n"
-    #printf "\tlast file modification:\t$last_modification\n"
-    #printf "\tlast file change:\t$last_change\n"
-    #printf "\n"
-    printf "$all" | sed 's/%/%%/g'
+    stamp_path "$file"
 done
 # from https://stackoverflow.com/a/25948226/5623661
    else
 # NOTE : Quote it else use array to avoid problems #
 for file in ./*
 do
-  all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-  printf "$all" | sed 's/%/%%/g'
+  stamp_path "$file"
 # from https://stackoverflow.com/a/25948226/5623661
 done
 # based from https://www.cyberciti.biz/faq/bash-loop-over-file/
@@ -79,8 +540,7 @@ fi
 }
 
 if [ "$1" = "save" ];then
-   echo "🤓📝 Working..."
-   display "$1" "$2" > .folderstamp
+   save_folderstamp "$1" "$2"
 fi
 if [ "$1" = "display" ];then
    display "$1" "$2"
@@ -91,6 +551,3 @@ fi
 #-to fix:     else
 #-to fix:        if [ "$1" = "save" ];then echo "🤓📝 Working..."; display > .file-timestamps; else display; fi
 #-to fix:     fi
-
-
-
