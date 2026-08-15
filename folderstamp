@@ -1,16 +1,89 @@
 #!/bin/bash -e
 
+FOLDERSTAMP_VERSION="r6"
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+platform_name() {
+    local uname_s uname_o
+    uname_s="$(uname -s 2>/dev/null || echo unknown)"
+    uname_o="$(uname -o 2>/dev/null || echo unknown)"
+
+    if [[ -n "${TERMUX_VERSION:-}" ]] || [[ "${PREFIX:-}" == *com.termux* ]] || [[ "$uname_o" == "Android" ]]; then
+        echo "Termux"
+    elif [[ "$uname_s" == CYGWIN* ]]; then
+        echo "Cygwin"
+    elif [[ "$uname_s" == "Redox" ]]; then
+        echo "RedoxOS"
+    else
+        echo "$uname_s"
+    fi
+}
+
+print_storage_details() {
+    local mount_source
+    mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')"
+
+    if [[ -n "$mount_source" ]] && command_exists lsblk; then
+        lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null \
+            | awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}'
+        return 0
+    fi
+
+    if command_exists df; then
+        df -hP . 2>/dev/null | awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}'
+        return 0
+    fi
+
+    echo "Storage Device: unavailable on this platform"
+}
+
+print_git_details() {
+    local current_branch first_remote_name first_remote_url
+
+    if [[ -d ".git" ]] && command_exists git; then
+        current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        first_remote_name="$(git remote 2>/dev/null | head -n1)"
+        echo "Current Git Branch: ${current_branch:-unknown}"
+
+        if [[ -n "$first_remote_name" ]]; then
+            first_remote_url="$(git remote get-url "$first_remote_name" 2>/dev/null || true)"
+            echo "First Git Remote: $first_remote_name - URL: ${first_remote_url:-unknown}"
+        else
+            echo "First Git Remote: none"
+        fi
+    fi
+}
+
+print_ipfs_hash() {
+    local file="$1"
+
+    if command_exists ipfs; then
+        echo "IPFS hash: $(ipfs add -q --only-hash "$file")"
+    else
+        echo "IPFS hash: unavailable (ipfs command not found)"
+    fi
+}
+
+stamp_path() {
+    local file="$1"
+    local all
+
+    all=$(printf '\n'; stat "$file" 2>/dev/null || echo "stat unavailable for: $file"; print_ipfs_hash "$file"; printf '%s\n' '------------------------------')
+    printf "%s" "$all" | sed 's/%/%%/g'
+}
+
 function display {
-#SCRIPTPATH="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
-#echo "This folder: $SCRIPTPATH"
 rocketlaunch_dir=`pwd` #from https://unix.stackexchange.com/a/52919/470623
 echo "This folder: $rocketlaunch_dir"
+echo "Platform: $(platform_name)"
 #-
-# Add storage device details
-storage_details=$(lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL | grep "$(df -P . | awk 'NR==2 {print $1}')" | sed 's/^/Storage Device: /')
-echo "$storage_details"
+# Add storage device details with fallbacks for Linux, Termux, Cygwin and RedoxOS.
+print_storage_details
 #-
-echo "folderstamp version: r5"
+echo "folderstamp version: $FOLDERSTAMP_VERSION"
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]; then
    method="Recursive"
 else
@@ -19,59 +92,20 @@ fi
 echo "Method: $method"  # Add this line to show the method used
 
 # Display current git branch and first git remote name with URL if .git folder is present
-# Check if .git folder exists
-if [ -d ".git" ]; then
-    current_branch=$(git rev-parse --abbrev-ref HEAD)
-    first_remote_name=$(git remote | head -n1)
-    first_remote_url=$(git remote get-url $first_remote_name)
-    echo "Current Git Branch: $current_branch"
-    echo "First Git Remote: $first_remote_name - URL: $first_remote_url"
-fi
+print_git_details
 
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
    then
 find . -type f -name '*' -print0 | while IFS= read -r -d '' file
 do
-    #name=$(basename "$file")
-    #path=$(dirname "$file")
-    # full_path=$(readlink -f "$file") # This only works on Linux
-    #full_path=$(echo "$PWD/${file#./}")
-    #extension=${name##*.}
-    #size_human_readable=$(ls -lh "$file" | awk -F' ' '{print $5}')
-    #size_in_bytes=$(stat -f "%z" "$file")
-    #creation_date=$(stat -f "%SB" "$file")
-    #last_access=$(stat -f "%Sa" "$file")
-    #last_modification=$(stat -f "%Sm" "$file")
-    #last_change=$(stat -f "%Sc" "$file")
-    #-to fix: all=$(echo -e "" && stat "$file" && if [ "$2" = "hash" ];then echo "IPFS hash: $(ipfs add -q --only-hash "$file")"; fi && echo -e "------------------------------")
-    all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-#-to fix:     if [ "$2" = "--hash" ];then
-#-to fix:        all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-#-to fix:     else
-#-to fix:        all=$(echo -e "" && stat "$file" && echo -e "------------------------------")
-#-to fix:     fi
-
-    #printf "[$file]:\n"
-    #printf "\tfile name:\t\t$name\n"
-    #printf "\tfile path:\t\t$path\n"
-    #printf "\tfull file path:\t\t$full_path\n"
-    #printf "\tfile extension:\t\t$extension\n"
-    #printf "\tfile size:\t\t$size_human_readable\n"
-    #printf "\tfile size in bytes:\t$size_in_bytes\n"
-    #printf "\tfile creation date:\t$creation_date\n"
-    #printf "\tlast file access:\t$last_access\n"
-    #printf "\tlast file modification:\t$last_modification\n"
-    #printf "\tlast file change:\t$last_change\n"
-    #printf "\n"
-    printf "$all" | sed 's/%/%%/g'
+    stamp_path "$file"
 done
 # from https://stackoverflow.com/a/25948226/5623661
    else
 # NOTE : Quote it else use array to avoid problems #
 for file in ./*
 do
-  all=$(echo -e "" && stat "$file" && echo "IPFS hash: $(ipfs add -q --only-hash "$file")" && echo -e "------------------------------")
-  printf "$all" | sed 's/%/%%/g'
+  stamp_path "$file"
 # from https://stackoverflow.com/a/25948226/5623661
 done
 # based from https://www.cyberciti.biz/faq/bash-loop-over-file/
@@ -91,6 +125,3 @@ fi
 #-to fix:     else
 #-to fix:        if [ "$1" = "save" ];then echo "🤓📝 Working..."; display > .file-timestamps; else display; fi
 #-to fix:     fi
-
-
-
