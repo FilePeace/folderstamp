@@ -6,6 +6,10 @@ Method: Non-recursive
 Dependency check:
 Dependency OK: stat (/usr/bin/stat)
 Dependency OK: git (/usr/bin/git)
+Gitoxide/gix not found; Gitoxide is the default optional VCS accelerator.
+You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
+  https://github.com/GitoxideLabs/gitoxide/releases/latest
+Gitoxide usually provides the `gix` command; choose the asset for your OS/CPU architecture.
 Optional dependency missing: pijul
 Suggested install: sudo apt-get update && sudo apt-get install -y pijul
 Dependency missing: ipfs
@@ -21,12 +25,12 @@ Current Git Branch: work
 First Git Remote: none
 
   File: ./CHANGELOG.md
-  Size: 3250      	Blocks: 8          IO Block: 4096   regular file
+  Size: 3716      	Blocks: 8          IO Block: 4096   regular file
 Device: 254,0	Inode: 2752568     Links: 1
 Access: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:29:12.157075331 +0000
-Modify: 2026-08-15 21:34:00.571981189 +0000
-Change: 2026-08-15 21:34:00.571981189 +0000
+Access: 2026-08-15 21:34:00.897075331 +0000
+Modify: 2026-08-15 21:41:58.517830670 +0000
+Change: 2026-08-15 21:41:58.517830670 +0000
  Birth: 2026-08-15 21:23:22.977075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
@@ -40,33 +44,43 @@ Change: 2026-08-15 21:18:15.113075331 +0000
  Birth: 2026-08-15 21:18:15.113075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
+  File: ./SKILL.md
+  Size: 3410      	Blocks: 8          IO Block: 4096   regular file
+Device: 254,0	Inode: 2752596     Links: 1
+Access: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)
+Access: 2026-08-15 21:41:46.329075331 +0000
+Modify: 2026-08-15 21:41:46.337075331 +0000
+Change: 2026-08-15 21:41:46.337075331 +0000
+ Birth: 2026-08-15 21:41:46.329075331 +0000
+IPFS hash: unavailable (ipfs command not found)
+------------------------------
   File: ./folderstamp
-  Size: 8122      	Blocks: 16         IO Block: 4096   regular file
+  Size: 13384     	Blocks: 32         IO Block: 4096   regular file
 Device: 254,0	Inode: 304776      Links: 1
 Access: (0755/-rwxr-xr-x)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:34:00.593075331 +0000
-Modify: 2026-08-15 21:34:00.571753895 +0000
-Change: 2026-08-15 21:34:00.571753895 +0000
+Access: 2026-08-15 21:42:13.537075331 +0000
+Modify: 2026-08-15 21:42:13.526483206 +0000
+Change: 2026-08-15 21:42:13.526483206 +0000
  Birth: 2026-08-15 21:19:38.081075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
   File: ./install.sh
-  Size: 1521      	Blocks: 8          IO Block: 4096   regular file
+  Size: 1770      	Blocks: 8          IO Block: 4096   regular file
 Device: 254,0	Inode: 304777      Links: 1
 Access: (0755/-rwxr-xr-x)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:19:38.125075331 +0000
-Modify: 2026-08-15 21:19:38.105075331 +0000
-Change: 2026-08-15 21:19:38.117075331 +0000
+Access: 2026-08-15 21:41:29.169075331 +0000
+Modify: 2026-08-15 21:41:29.160516908 +0000
+Change: 2026-08-15 21:41:29.160516908 +0000
  Birth: 2026-08-15 21:19:38.101075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
   File: ./to-do.md
-  Size: 2934      	Blocks: 8          IO Block: 4096   regular file
+  Size: 3189      	Blocks: 8          IO Block: 4096   regular file
 Device: 254,0	Inode: 2752565     Links: 1
 Access: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:29:15.297075331 +0000
-Modify: 2026-08-15 21:34:00.585075331 +0000
-Change: 2026-08-15 21:34:00.585075331 +0000
+Access: 2026-08-15 21:34:00.897075331 +0000
+Modify: 2026-08-15 21:41:58.517988779 +0000
+Change: 2026-08-15 21:41:58.517988779 +0000
  Birth: 2026-08-15 21:18:15.113075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------

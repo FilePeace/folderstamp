@@ -8,6 +8,10 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 
 ### Added
 - Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul` e `ipfs`.
+- Adicionado instalador interativo para Kubo/IPFS e Gitoxide via GitHub Releases quando o usuário confirma no prompt.
+- Adicionado Gitoxide como opção padrão sugerida mesmo quando Git clássico já existe, sem exigir passos manuais em sessão interativa.
+- Adicionado suporte de portabilidade para BSD, macOS e Zircon/Fuchsia.
+- Criado `SKILL.md` com práticas de Bash portátil, diagnósticos, dependências e documentação usadas nesta sequência de patches.
 - Adicionada opção orientada para instalar Git pelo package manager ou Gitoxide via GitHub Releases quando nenhum dos dois está instalado.
 - Adicionado suporte a repositórios Pijul ao lado do Git, exibindo canal atual quando `.pijul` existe.
 - Adicionada oferta de instalação do Kubo/IPFS via GitHub Releases quando `ipfs` não está instalado.

@@ -53,3 +53,10 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 - [ ] Melhorar suporte ao Gitoxide para extrair branch/remotes sem depender do Git clássico.
 - [ ] Expandir suporte Pijul para registrar remotes, identidade do repositório e mudanças pendentes.
 - [ ] Adicionar testes simulando ambientes com apenas `git`, apenas `gix`, apenas `pijul` e nenhum VCS instalado.
+
+
+## Plataformas adicionais
+
+- [ ] Testar o instalador em macOS real com e sem Homebrew.
+- [ ] Testar comandos BSD com `pkg` e `pkg_add` em shells não-GNU.
+- [ ] Documentar o que é possível automatizar em Zircon/Fuchsia sem fingir universalidade fake.

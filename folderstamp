@@ -17,6 +17,12 @@ platform_name() {
         echo "Cygwin"
     elif [[ "$uname_s" == "Redox" ]]; then
         echo "RedoxOS"
+    elif [[ "$uname_s" == "Darwin" ]]; then
+        echo "macOS"
+    elif [[ "$uname_s" == *BSD ]]; then
+        echo "BSD"
+    elif [[ "$uname_s" == "Fuchsia" ]] || [[ "$uname_s" == "Zircon" ]]; then
+        echo "Zircon/Fuchsia"
     else
         echo "$uname_s"
     fi
@@ -37,6 +43,25 @@ install_command_for() {
             ;;
         RedoxOS)
             echo "pkg install $package"
+            ;;
+        macOS)
+            if command_exists brew; then
+                echo "brew install $package"
+            else
+                echo "Install '$package' with Homebrew, MacPorts, or the upstream project release."
+            fi
+            ;;
+        BSD)
+            if command_exists pkg; then
+                echo "pkg install $package"
+            elif command_exists pkg_add; then
+                echo "pkg_add $package"
+            else
+                echo "Install '$package' with your BSD package manager."
+            fi
+            ;;
+        Zircon/Fuchsia)
+            echo "Install '$package' with the Fuchsia package workflow for your image/build."
             ;;
         Linux)
             if command_exists apt-get; then
@@ -60,9 +85,158 @@ install_command_for() {
 }
 
 
+normalized_arch() {
+    local arch
+    arch="$(uname -m 2>/dev/null || echo unknown)"
+
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        armv7*|armv6*) echo "arm" ;;
+        *) echo "$arch" ;;
+    esac
+}
+
+github_os_token() {
+    case "$(platform_name)" in
+        Linux|Termux) echo "linux" ;;
+        macOS) echo "darwin" ;;
+        BSD) echo "freebsd" ;;
+        Cygwin) echo "windows" ;;
+        *) echo "" ;;
+    esac
+}
+
+install_bin_dir() {
+    if [[ -n "${PREFIX:-}" && -w "${PREFIX}/bin" ]]; then
+        echo "${PREFIX}/bin"
+    elif [[ -d "$HOME/.local/bin" || -w "$HOME" ]]; then
+        mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+        echo "$HOME/.local/bin"
+    else
+        echo "/usr/local/bin"
+    fi
+}
+
+install_release_asset() {
+    local repo="$1"
+    local label="$2"
+    local asset_regex="$3"
+    local bin_name="$4"
+    local os_token arch token url archive workdir dest
+
+    if ! command_exists curl; then
+        echo "Cannot auto-install $label: curl is missing."
+        echo "Suggested install: $(install_command_for curl)"
+        return 1
+    fi
+
+    if ! command_exists tar; then
+        echo "Cannot auto-install $label: tar is missing."
+        echo "Suggested install: $(install_command_for tar)"
+        return 1
+    fi
+
+    if ! command_exists python3; then
+        echo "Cannot auto-install $label safely: python3 is missing for GitHub release asset selection."
+        echo "Open instead: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    os_token="$(github_os_token)"
+    arch="$(normalized_arch)"
+    token="${os_token}-${arch}"
+
+    if [[ -z "$os_token" ]]; then
+        echo "Cannot auto-install $label on $(platform_name) yet. Open: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    url="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" | python3 -c '
+import json, re, sys
+os_token = sys.argv[1].lower()
+arch = sys.argv[2].lower()
+regex = re.compile(sys.argv[3], re.I)
+arch_aliases = {
+    "amd64": ["amd64", "x86_64"],
+    "arm64": ["arm64", "aarch64"],
+    "arm": ["arm", "armv7", "armv6"],
+}
+arches = arch_aliases.get(arch, [arch])
+data = json.load(sys.stdin)
+for asset in data.get("assets", []):
+    name = asset.get("name", "")
+    low = name.lower()
+    if os_token in low and any(a in low for a in arches) and regex.search(name):
+        print(asset.get("browser_download_url", ""))
+        break
+' "$os_token" "$arch" "$asset_regex")"
+
+    if [[ -z "$url" ]]; then
+        echo "No matching $label release asset found for $token."
+        echo "Open: https://github.com/$repo/releases/latest"
+        return 1
+    fi
+
+    workdir="$(mktemp -d 2>/dev/null || mktemp -d -t folderstamp)"
+    archive="$workdir/asset.tar.gz"
+    dest="$(install_bin_dir)/$bin_name"
+
+    echo "Downloading $label from: $url"
+    curl -fL "$url" -o "$archive"
+    tar -xzf "$archive" -C "$workdir"
+
+    found="$(find "$workdir" -type f -name "$bin_name" -perm -u+x 2>/dev/null | head -n1)"
+    if [[ -z "$found" ]]; then
+        found="$(find "$workdir" -type f -name "$bin_name" 2>/dev/null | head -n1)"
+    fi
+
+    if [[ -z "$found" ]]; then
+        echo "Downloaded $label, but could not find $bin_name inside the archive."
+        echo "Workdir kept for inspection: $workdir"
+        return 1
+    fi
+
+    cp "$found" "$dest"
+    chmod +x "$dest"
+    echo "$label installed at $dest"
+}
+
+ask_yes_no() {
+    local question="$1"
+    local answer
+
+    if [[ ! -t 0 ]]; then
+        return 1
+    fi
+
+    printf "%s [Y/n] " "$question"
+    read -r answer
+    case "$answer" in
+        n|N|no|NO|No) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+offer_gitoxide_install() {
+    if ask_yes_no "Install Gitoxide/gix from GitHub Releases now?"; then
+        install_release_asset "GitoxideLabs/gitoxide" "Gitoxide" 'gitoxide.*(tar\.gz|tgz)$' "gix"
+    else
+        gitoxide_install_offer
+    fi
+}
+
+offer_kubo_install() {
+    if ask_yes_no "Install Kubo/IPFS from GitHub Releases now?"; then
+        install_release_asset "ipfs/kubo" "Kubo/IPFS" 'kubo.*(tar\.gz|tgz)$' "ipfs"
+    else
+        kubo_install_offer
+    fi
+}
+
 gitoxide_install_offer() {
     cat <<'GITOXIDE_EOF'
-Git not found. You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
+You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
   https://github.com/GitoxideLabs/gitoxide/releases/latest
 Gitoxide usually provides the `gix` command; choose the asset for your OS/CPU architecture.
 GITOXIDE_EOF
@@ -71,6 +245,10 @@ GITOXIDE_EOF
 check_git_tooling() {
     if command_exists git; then
         echo "Dependency OK: git ($(command -v git))"
+        if ! command_exists gix; then
+            echo "Gitoxide/gix not found; Gitoxide is the default optional VCS accelerator."
+            offer_gitoxide_install || true
+        fi
         return 0
     fi
 
@@ -81,7 +259,7 @@ check_git_tooling() {
 
     echo "Dependency missing: git or gitoxide/gix"
     echo "Suggested Git install: $(install_command_for git)"
-    gitoxide_install_offer
+    offer_gitoxide_install || true
     return 1
 }
 
@@ -124,7 +302,7 @@ check_dependency() {
     echo "Dependency missing: $command_name"
 
     if [[ "$command_name" == "ipfs" ]]; then
-        kubo_install_offer
+        offer_kubo_install || true
     else
         echo "Suggested install: $(install_command_for "$package_name")"
     fi

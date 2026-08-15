@@ -13,8 +13,14 @@ install_dir() {
         echo "${PREFIX:-/data/data/com.termux/files/usr}/bin"
     elif [ "$uname_s" = "Redox" ]; then
         echo "${HOME}/bin"
+    elif [ "$uname_s" = "Darwin" ]; then
+        echo "/usr/local/bin"
     elif [ "${uname_s#CYGWIN}" != "$uname_s" ]; then
         echo "/usr/local/bin"
+    elif [ "${uname_s%BSD}" != "$uname_s" ]; then
+        echo "/usr/local/bin"
+    elif [ "$uname_s" = "Fuchsia" ] || [ "$uname_s" = "Zircon" ]; then
+        echo "${HOME}/bin"
     else
         echo "/usr/bin"
     fi
