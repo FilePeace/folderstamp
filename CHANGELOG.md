@@ -8,6 +8,8 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 
 ### Added
 - Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul` e `ipfs`.
+- Renomeado o rótulo de saída de `IPFS hash:` para `CID hash:` para cobrir IPFS, Iroh e outros ecossistemas que usam CID sem acoplar marca.
+- Iniciada implementação básica de geração de CIDv0 sem Kubo/IPFS usando Python 3 para arquivos single-block UnixFS/DAG-PB.
 - Alterado `save` para armazenar novos stamps em `.meta/folderstamp/` em vez de criar `.folderstamp` na raiz.
 - Adicionada migração automática de `.folderstamp` legado para `.meta/folderstamp/.folderstamp.1`, criando o próximo número disponível para novos stamps.
 - Adicionada tarefa para avaliar Iroh como alternativa Rust para gerar CIDv0 e CIDv1.

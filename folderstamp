@@ -368,13 +368,66 @@ print_pijul_details() {
     fi
 }
 
-print_ipfs_hash() {
+cid_v0_basic_python() {
+    local file="$1"
+
+    python3 - "$file" <<'PY_CID'
+import hashlib
+import sys
+
+ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def field_varint(number: int, value: int) -> bytes:
+    return varint((number << 3) | 0) + varint(value)
+
+
+def field_bytes(number: int, value: bytes) -> bytes:
+    return varint((number << 3) | 2) + varint(len(value)) + value
+
+
+def b58encode(data: bytes) -> str:
+    n = int.from_bytes(data, "big")
+    chars = []
+    while n:
+        n, rem = divmod(n, 58)
+        chars.append(ALPHABET[rem])
+    prefix = "1" * (len(data) - len(data.lstrip(b"\\0")))
+    return prefix + "".join(reversed(chars or ["1"]))
+
+path = sys.argv[1]
+with open(path, "rb") as handle:
+    payload = handle.read()
+
+# Basic CIDv0 study/implementation for a single-block UnixFS file:
+# UnixFS Data: Type=File(2), Data=<bytes>, filesize=<len>.
+unixfs_data = field_varint(1, 2) + field_bytes(2, payload) + field_varint(3, len(payload))
+# DAG-PB PBNode: Data=<UnixFS Data>. No links/chunking in this basic fallback.
+pb_node = field_bytes(1, unixfs_data)
+digest = hashlib.sha256(pb_node).digest()
+multihash = bytes([0x12, 0x20]) + digest
+print(b58encode(multihash))
+PY_CID
+}
+
+print_cid_hash() {
     local file="$1"
 
     if command_exists ipfs; then
-        echo "IPFS hash: $(ipfs add -q --only-hash "$file")"
+        echo "CID hash: $(ipfs add -q --only-hash "$file")"
+    elif command_exists python3; then
+        echo "CID hash (CIDv0 basic): $(cid_v0_basic_python "$file")"
     else
-        echo "IPFS hash: unavailable (ipfs command not found)"
+        echo "CID hash: unavailable (install Kubo/IPFS, Iroh, or python3 for the basic CIDv0 fallback)"
     fi
 }
 
@@ -382,7 +435,7 @@ stamp_path() {
     local file="$1"
     local all
 
-    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_ipfs_hash "$file"; printf '%s\n' '------------------------------')
+    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_cid_hash "$file"; printf '%s\n' '------------------------------')
     printf "%s" "$all" | sed 's/%/%%/g'
 }
 

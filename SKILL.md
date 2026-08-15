@@ -60,3 +60,8 @@ Detect the platform before choosing paths or install commands. Consider at least
 
 - Prefer storing generated metadata under `.meta/<tool-name>/` instead of cluttering the project root.
 - When migrating legacy root metadata files, preserve them by numbering old outputs before creating the next stamp.
+
+## CID naming
+
+- Prefer the neutral label `CID hash:` instead of brand-specific labels such as `IPFS hash:`.
+- When implementing CID fallbacks, document whether the implementation is basic/single-block or feature-complete.
