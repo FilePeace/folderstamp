@@ -1,11 +1,13 @@
 This folder: /workspace/folderstamp
 Platform: Linux
 Storage Device: vda   64G disk 0x1af4 
-folderstamp version: r7
+folderstamp version: r6
 Method: Non-recursive
 Dependency check:
 Dependency OK: stat (/usr/bin/stat)
 Dependency OK: git (/usr/bin/git)
+Optional dependency missing: pijul
+Suggested install: sudo apt-get update && sudo apt-get install -y pijul
 Dependency missing: ipfs
 Dependency notice: ipfs is not installed.
 Kubo is the reference IPFS implementation; you can download it from GitHub Releases:
@@ -19,12 +21,12 @@ Current Git Branch: work
 First Git Remote: none
 
   File: ./CHANGELOG.md
-  Size: 3037      	Blocks: 8          IO Block: 4096   regular file
+  Size: 3250      	Blocks: 8          IO Block: 4096   regular file
 Device: 254,0	Inode: 2752568     Links: 1
 Access: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:23:22.989075331 +0000
-Modify: 2026-08-15 21:29:06.222977383 +0000
-Change: 2026-08-15 21:29:06.222977383 +0000
+Access: 2026-08-15 21:29:12.157075331 +0000
+Modify: 2026-08-15 21:34:00.571981189 +0000
+Change: 2026-08-15 21:34:00.571981189 +0000
  Birth: 2026-08-15 21:23:22.977075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
@@ -39,12 +41,12 @@ Change: 2026-08-15 21:18:15.113075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
   File: ./folderstamp
-  Size: 6302      	Blocks: 16         IO Block: 4096   regular file
+  Size: 8122      	Blocks: 16         IO Block: 4096   regular file
 Device: 254,0	Inode: 304776      Links: 1
 Access: (0755/-rwxr-xr-x)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:29:06.237075331 +0000
-Modify: 2026-08-15 21:29:06.222772970 +0000
-Change: 2026-08-15 21:29:06.222772970 +0000
+Access: 2026-08-15 21:34:00.593075331 +0000
+Modify: 2026-08-15 21:34:00.571753895 +0000
+Change: 2026-08-15 21:34:00.571753895 +0000
  Birth: 2026-08-15 21:19:38.081075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
@@ -59,12 +61,12 @@ Change: 2026-08-15 21:19:38.117075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------
   File: ./to-do.md
-  Size: 2586      	Blocks: 8          IO Block: 4096   regular file
+  Size: 2934      	Blocks: 8          IO Block: 4096   regular file
 Device: 254,0	Inode: 2752565     Links: 1
 Access: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)
-Access: 2026-08-15 21:18:15.149075331 +0000
-Modify: 2026-08-15 21:28:46.585075331 +0000
-Change: 2026-08-15 21:28:46.585075331 +0000
+Access: 2026-08-15 21:29:15.297075331 +0000
+Modify: 2026-08-15 21:34:00.585075331 +0000
+Change: 2026-08-15 21:34:00.585075331 +0000
  Birth: 2026-08-15 21:18:15.113075331 +0000
 IPFS hash: unavailable (ipfs command not found)
 ------------------------------

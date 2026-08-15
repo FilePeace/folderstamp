@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-FOLDERSTAMP_VERSION="r7"
+FOLDERSTAMP_VERSION="r6"
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -59,6 +59,46 @@ install_command_for() {
     esac
 }
 
+
+gitoxide_install_offer() {
+    cat <<'GITOXIDE_EOF'
+Git not found. You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
+  https://github.com/GitoxideLabs/gitoxide/releases/latest
+Gitoxide usually provides the `gix` command; choose the asset for your OS/CPU architecture.
+GITOXIDE_EOF
+}
+
+check_git_tooling() {
+    if command_exists git; then
+        echo "Dependency OK: git ($(command -v git))"
+        return 0
+    fi
+
+    if command_exists gix; then
+        echo "Dependency OK: gitoxide/gix ($(command -v gix))"
+        return 0
+    fi
+
+    echo "Dependency missing: git or gitoxide/gix"
+    echo "Suggested Git install: $(install_command_for git)"
+    gitoxide_install_offer
+    return 1
+}
+
+check_optional_dependency() {
+    local command_name="$1"
+    local package_name="${2:-$1}"
+
+    if command_exists "$command_name"; then
+        echo "Optional dependency OK: $command_name ($(command -v "$command_name"))"
+        return 0
+    fi
+
+    echo "Optional dependency missing: $command_name"
+    echo "Suggested install: $(install_command_for "$package_name")"
+    return 1
+}
+
 kubo_install_offer() {
     cat <<'KUBO_EOF'
 Dependency notice: ipfs is not installed.
@@ -95,7 +135,8 @@ check_dependency() {
 print_dependency_report() {
     echo "Dependency check:"
     check_dependency stat coreutils || true
-    check_dependency git git || true
+    check_git_tooling || true
+    check_optional_dependency pijul pijul || true
     check_dependency ipfs kubo || true
 }
 
@@ -131,6 +172,21 @@ print_git_details() {
         else
             echo "First Git Remote: none"
         fi
+    elif [[ -d ".git" ]] && command_exists gix; then
+        echo "Git repository detected; Gitoxide available: $(command -v gix)"
+        echo "Current Git Branch: unavailable without classic git"
+    fi
+}
+
+print_pijul_details() {
+    local current_channel
+
+    if [[ -d ".pijul" ]] && command_exists pijul; then
+        current_channel="$(pijul channel 2>/dev/null | awk '/\*/ {print $2; exit}')"
+        echo "Current Pijul Channel: ${current_channel:-unknown}"
+    elif [[ -d ".pijul" ]]; then
+        echo "Pijul repository detected, but pijul is not installed."
+        echo "Suggested install: $(install_command_for pijul)"
     fi
 }
 
@@ -171,6 +227,7 @@ echo "Method: $method"  # Add this line to show the method used
 # Display current git branch and first git remote name with URL if .git folder is present
 print_dependency_report
 print_git_details
+print_pijul_details
 
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
    then

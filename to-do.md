@@ -47,3 +47,9 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 - [ ] Documentar as limitações do hash IPFS quando o daemon não está rodando.
 - [ ] Adicionar exemplos de saída para modo recursivo e não-recursivo.
 - [ ] Explicar como auditar um `.folderstamp` salvo.
+
+## Controle de versão alternativo
+
+- [ ] Melhorar suporte ao Gitoxide para extrair branch/remotes sem depender do Git clássico.
+- [ ] Expandir suporte Pijul para registrar remotes, identidade do repositório e mudanças pendentes.
+- [ ] Adicionar testes simulando ambientes com apenas `git`, apenas `gix`, apenas `pijul` e nenhum VCS instalado.

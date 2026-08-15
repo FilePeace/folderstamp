@@ -4,22 +4,16 @@ Todas as mudanças relevantes deste projeto serão documentadas aqui.
 
 O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com versões em ordem cronológica reversa.
 
-## [r7] - 2026-08-15
+## [r6] - 2026-08-15
 
 ### Added
-- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git` e `ipfs`.
+- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul` e `ipfs`.
+- Adicionada opção orientada para instalar Git pelo package manager ou Gitoxide via GitHub Releases quando nenhum dos dois está instalado.
+- Adicionado suporte a repositórios Pijul ao lado do Git, exibindo canal atual quando `.pijul` existe.
 - Adicionada oferta de instalação do Kubo/IPFS via GitHub Releases quando `ipfs` não está instalado.
 - Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
 - Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
 - Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.
-
-### Changed
-- Renomeado `Tasks.txt` para `to-do.md`, com checkboxes e seções temáticas.
-- Atualizada a versão interna do `folderstamp` para `r7`.
-
-## [r6] - 2026-08-15
-
-### Added
 - Adicionado suporte explícito à detecção de plataforma para Termux, Cygwin e RedoxOS, mantendo compatibilidade com Linux padrão.
 - Adicionada saída `Platform:` ao comando `folderstamp display`, facilitando debug em ambientes diferentes.
 - Adicionado fallback para detalhes de armazenamento: usa `lsblk` quando disponível e recorre a `df -hP` quando `lsblk` não existe.
@@ -31,6 +25,8 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
   - Linux padrão: `/usr/bin`.
 
 ### Changed
+- Renomeado `Tasks.txt` para `to-do.md`, com checkboxes e seções temáticas.
+- Mantida a versão interna do `folderstamp` em `r6`.
 - Centralizada a lógica de carimbo de arquivos na função `stamp_path`, reduzindo duplicação entre os modos recursivo e não-recursivo.
 - Centralizada a leitura de dados Git na função `print_git_details`, com tratamento para repositórios sem remote configurado.
 - O instalador deixou de depender obrigatoriamente de `sudo`; agora usa `sudo` apenas quando o diretório de destino exige permissão elevada e o comando está disponível.
