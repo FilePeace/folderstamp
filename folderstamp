@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-FOLDERSTAMP_VERSION="r6"
+FOLDERSTAMP_VERSION="r7"
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -20,6 +20,83 @@ platform_name() {
     else
         echo "$uname_s"
     fi
+}
+
+
+install_command_for() {
+    local package="$1"
+    local platform
+    platform="$(platform_name)"
+
+    case "$platform" in
+        Termux)
+            echo "pkg install $package"
+            ;;
+        Cygwin)
+            echo "Install the '$package' package with the Cygwin setup executable."
+            ;;
+        RedoxOS)
+            echo "pkg install $package"
+            ;;
+        Linux)
+            if command_exists apt-get; then
+                echo "sudo apt-get update && sudo apt-get install -y $package"
+            elif command_exists dnf; then
+                echo "sudo dnf install -y $package"
+            elif command_exists pacman; then
+                echo "sudo pacman -S --needed $package"
+            elif command_exists apk; then
+                echo "sudo apk add $package"
+            elif command_exists zypper; then
+                echo "sudo zypper install -y $package"
+            else
+                echo "Install '$package' with your distribution package manager."
+            fi
+            ;;
+        *)
+            echo "Install '$package' with the package manager for $(platform_name)."
+            ;;
+    esac
+}
+
+kubo_install_offer() {
+    cat <<'KUBO_EOF'
+Dependency notice: ipfs is not installed.
+Kubo is the reference IPFS implementation; you can download it from GitHub Releases:
+  https://github.com/ipfs/kubo/releases/latest
+Choose the release asset that matches your OS and CPU architecture, then run the install script shipped in the archive.
+Linux example after downloading the correct tarball:
+  tar -xzf kubo_*.tar.gz
+  cd kubo && sudo ./install.sh
+Termux users should install into $PREFIX/bin instead of relying on sudo.
+KUBO_EOF
+}
+
+check_dependency() {
+    local command_name="$1"
+    local package_name="${2:-$1}"
+
+    if command_exists "$command_name"; then
+        echo "Dependency OK: $command_name ($(command -v "$command_name"))"
+        return 0
+    fi
+
+    echo "Dependency missing: $command_name"
+
+    if [[ "$command_name" == "ipfs" ]]; then
+        kubo_install_offer
+    else
+        echo "Suggested install: $(install_command_for "$package_name")"
+    fi
+
+    return 1
+}
+
+print_dependency_report() {
+    echo "Dependency check:"
+    check_dependency stat coreutils || true
+    check_dependency git git || true
+    check_dependency ipfs kubo || true
 }
 
 print_storage_details() {
@@ -71,7 +148,7 @@ stamp_path() {
     local file="$1"
     local all
 
-    all=$(printf '\n'; stat "$file" 2>/dev/null || echo "stat unavailable for: $file"; print_ipfs_hash "$file"; printf '%s\n' '------------------------------')
+    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_ipfs_hash "$file"; printf '%s\n' '------------------------------')
     printf "%s" "$all" | sed 's/%/%%/g'
 }
 
@@ -92,6 +169,7 @@ fi
 echo "Method: $method"  # Add this line to show the method used
 
 # Display current git branch and first git remote name with URL if .git folder is present
+print_dependency_report
 print_git_details
 
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]

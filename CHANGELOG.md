@@ -4,6 +4,19 @@ Todas as mudanças relevantes deste projeto serão documentadas aqui.
 
 O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com versões em ordem cronológica reversa.
 
+## [r7] - 2026-08-15
+
+### Added
+- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git` e `ipfs`.
+- Adicionada oferta de instalação do Kubo/IPFS via GitHub Releases quando `ipfs` não está instalado.
+- Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
+- Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
+- Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.
+
+### Changed
+- Renomeado `Tasks.txt` para `to-do.md`, com checkboxes e seções temáticas.
+- Atualizada a versão interna do `folderstamp` para `r7`.
+
 ## [r6] - 2026-08-15
 
 ### Added
