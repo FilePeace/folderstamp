@@ -225,6 +225,17 @@ ask_yes_no() {
     esac
 }
 
+run_privileged() {
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        "$@"
+    elif command_exists sudo; then
+        sudo "$@"
+    else
+        echo "Cannot run the system package manager: administrator privileges are required and sudo is unavailable."
+        return 1
+    fi
+}
+
 offer_gitoxide_install() {
     if ask_yes_no "Install Gitoxide/gix from GitHub Releases now?"; then
         install_release_asset "GitoxideLabs/gitoxide" "Gitoxide" 'gitoxide.*(tar\.gz|tgz)$' "gix"
@@ -233,11 +244,12 @@ offer_gitoxide_install() {
     fi
 }
 
-install_rust_stat_release() {
+install_uutils_stat_compatibility() {
     local bin_dir
 
-    # uutils ships one multicall `coreutils` binary. Create a tiny `stat` launcher
-    # beside it so the rest of folderstamp can keep using the normal command name.
+    # uutils ships one multicall `coreutils` binary. Its launcher keeps the usual
+    # `stat` command-line interface available in the user's private bin directory;
+    # it never replaces a system-provided stat.
     install_release_asset "uutils/coreutils" "uutils/coreutils" 'coreutils.*(tar\.gz|tgz)$' "coreutils" || return 1
     bin_dir="$(install_bin_dir)"
     cat > "$bin_dir/stat" <<'STAT_WRAPPER'
@@ -245,14 +257,72 @@ install_rust_stat_release() {
 exec "$(dirname "$0")/coreutils" stat "$@"
 STAT_WRAPPER
     chmod +x "$bin_dir/stat"
-    echo "uutils/coreutils stat installed at $bin_dir/stat"
+    echo "uutils/coreutils compatible stat installed at $bin_dir/stat"
 }
 
-offer_rust_stat_install() {
-    if ask_yes_no "Install the Rust uutils/coreutils stat replacement from GitHub Releases now?"; then
-        install_rust_stat_release
+install_normal_stat() {
+    local platform
+    platform="$(platform_name)"
+
+    # Prefer the platform package: folderstamp needs the conventional `stat`
+    # command, not an implicit replacement installed behind the user's back.
+    case "$platform" in
+        Termux)
+            pkg install -y coreutils
+            ;;
+        RedoxOS)
+            pkg install coreutils
+            ;;
+        Linux)
+            if command_exists apt-get; then
+                run_privileged apt-get update && run_privileged apt-get install -y coreutils
+            elif command_exists dnf; then
+                run_privileged dnf install -y coreutils
+            elif command_exists pacman; then
+                run_privileged pacman -S --needed coreutils
+            elif command_exists apk; then
+                run_privileged apk add coreutils
+            elif command_exists zypper; then
+                run_privileged zypper install -y coreutils
+            else
+                echo "No supported Linux package manager was found."
+                echo "Install the normal stat command with: $(install_command_for coreutils)"
+                return 1
+            fi
+            ;;
+        Cygwin)
+            echo "Install the normal stat command by selecting the Cygwin 'coreutils' package."
+            return 1
+            ;;
+        macOS|BSD)
+            # These platforms ship stat as part of their base system. If it is
+            # absent, a damaged/minimal image needs its vendor package workflow.
+            echo "$platform normally provides stat in its base system."
+            echo "Restore the platform core utilities or use: $(install_command_for coreutils)"
+            return 1
+            ;;
+        *)
+            echo "Install the normal stat command with: $(install_command_for coreutils)"
+            return 1
+            ;;
+    esac
+}
+
+offer_normal_stat_install() {
+    if ask_yes_no "Install the normal stat command with this platform's package manager now?"; then
+        install_normal_stat
     else
-        echo "Rust alternative: https://github.com/uutils/coreutils/releases/latest"
+        echo "Normal stat install: $(install_command_for coreutils)"
+        return 1
+    fi
+}
+
+offer_uutils_stat_install() {
+    if ask_yes_no "Install uutils/coreutils, a Rust-compatible stat alternative, from GitHub Releases now?"; then
+        install_uutils_stat_compatibility
+    else
+        echo "Rust-compatible alternative: https://github.com/uutils/coreutils/releases/latest"
+        return 1
     fi
 }
 
@@ -316,8 +386,17 @@ check_stat_tooling() {
     fi
 
     echo "Dependency missing: stat"
-    echo "Suggested install: $(install_command_for coreutils)"
-    offer_rust_stat_install || true
+    echo "The normal platform stat command is required for file metadata."
+    echo "Suggested normal install: $(install_command_for coreutils)"
+    offer_normal_stat_install || true
+
+    if command_exists stat; then
+        echo "Dependency OK after installation: stat ($(command -v stat))"
+        return 0
+    fi
+
+    echo "Normal stat is still unavailable; uutils/coreutils is an optional Rust-compatible fallback."
+    offer_uutils_stat_install || true
     return 1
 }
 

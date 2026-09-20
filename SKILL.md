@@ -25,7 +25,7 @@ Detect the platform before choosing paths or install commands. Consider at least
 ## Dependency handling
 
 - Wrap command detection in a helper such as `command_exists() { command -v "$1" >/dev/null 2>&1; }`.
-- Check critical commands before use (`stat`, `find`, `sed`, `awk`, `df`, `tar`, `curl`, VCS tools).
+- Check critical commands before use (`stat`, `find`, `sed`, `awk`, `df`, `tar`, `curl`, VCS tools). When `stat` is required, prefer restoring/installing the normal platform command through its package manager. Offer a Rust-compatible implementation such as uutils/coreutils separately and never silently replace the system command.
 - Prefer graceful fallbacks:
   - `lsblk` for Linux storage details, then `df -hP` as fallback.
   - Git metadata via `git`, with Gitoxide/`gix` as a supported alternative where possible.
@@ -38,6 +38,7 @@ Detect the platform before choosing paths or install commands. Consider at least
 - If stdin is not a TTY, print the install/release URL and continue safely.
 - Install into user-writable locations first (`$PREFIX/bin`, `$HOME/.local/bin`) before attempting privileged paths.
 - Never require `sudo` on Termux.
+- For a system package install, run the detected package-manager command only after an explicit prompt; use `sudo` only when needed and available, and explain the privilege limitation otherwise.
 - If auto-install needs helper tools (`curl`, `tar`, `python3`), check them first and explain what is missing.
 
 ## Bash style

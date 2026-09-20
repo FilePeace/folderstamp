@@ -7,7 +7,7 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 ## [r6] - 2026-08-15
 
 ### Added
-- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, o `stat` de uutils/coreutils, `git`/Gitoxide, `pijul`, Iroh, Python + `blake3` e `ipfs`.
+- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul`, Iroh, Python + `blake3` e `ipfs`.
 - Renomeado o rótulo de saída de `IPFS hash:` para `CID hash:` para cobrir IPFS, Iroh e outros ecossistemas que usam CID sem acoplar marca.
 - Implementado fallback Python + `blake3` que gera CIDv1 raw/BLAKE3; o estudo CIDv0 single-block UnixFS/DAG-PB segue disponível como último fallback Python.
 - Alterado `save` para armazenar novos stamps em `.meta/folderstamp/` em vez de criar `.folderstamp` na raiz.
@@ -19,7 +19,7 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Criado `SKILL.md` com práticas de Bash portátil, diagnósticos, dependências e documentação usadas nesta sequência de patches.
 - Adicionada opção orientada para instalar Git pelo package manager ou Gitoxide via GitHub Releases quando nenhum dos dois está instalado.
 - Adicionado suporte a repositórios Pijul ao lado do Git, exibindo canal atual quando `.pijul` existe.
-- Adicionada oferta de instalação do `stat` Rust de uutils/coreutils e do CLI de blobs Iroh via GitHub Releases.
+- Adicionada instalação interativa do `stat` normal pelo package manager da plataforma; uutils/coreutils via GitHub Releases ficou como alternativa compatível em Rust, sem substituir silenciosamente o comando do sistema.
 - Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
 - Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
 - Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.
