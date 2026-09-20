@@ -336,6 +336,19 @@ offer_iroh_install() {
     fi
 }
 
+install_kubo_release() {
+    install_release_asset "ipfs/kubo" "Kubo/IPFS" 'kubo_v.*(tar\.gz|tgz)$' "ipfs"
+}
+
+offer_kubo_install() {
+    if ask_yes_no "Install Kubo/IPFS from GitHub Releases as a compatibility fallback now?"; then
+        install_kubo_release
+    else
+        echo "Kubo/IPFS fallback release: https://github.com/ipfs/kubo/releases/latest"
+        return 1
+    fi
+}
+
 gitoxide_install_offer() {
     cat <<'GITOXIDE_EOF'
 You can install classic Git with your package manager, or install Gitoxide from GitHub Releases:
@@ -408,6 +421,17 @@ check_iroh_tooling() {
 
     echo "Optional dependency missing: iroh (preferred BLAKE3 content-addressing tool)"
     offer_iroh_install || true
+    return 1
+}
+
+check_kubo_tooling() {
+    if command_exists ipfs; then
+        echo "Optional compatibility fallback OK: ipfs ($(command -v ipfs))"
+        return 0
+    fi
+
+    echo "Optional compatibility fallback missing: ipfs/Kubo"
+    offer_kubo_install || true
     return 1
 }
 
@@ -654,9 +678,9 @@ print_cid_hash() {
         echo "Content hash (Iroh BLAKE3): $hash (install Python 3 for CIDv1 wrapping)"
     elif command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         echo "CID hash (CIDv1/raw/BLAKE3): $(cid_v1_blake3_python "$file")"
-    elif command_exists ipfs; then
+    elif command_exists ipfs && hash="$(ipfs add -q --only-hash --cid-version=1 --raw-leaves --hash=blake3 "$file" 2>/dev/null)"; then
         # Kubo remains compatible, but is deliberately not the default provider.
-        echo "CID hash (Kubo/IPFS fallback): $(ipfs add -q --only-hash "$file")"
+        echo "CID hash (CIDv1/raw/BLAKE3 via Kubo/IPFS fallback): $hash"
     elif command_exists python3; then
         echo "CID hash (CIDv0 basic): $(cid_v0_basic_python "$file")"
     else

@@ -22,6 +22,7 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Adicionada instalação interativa do `stat` normal pelo package manager da plataforma; uutils/coreutils via GitHub Releases ficou como alternativa compatível em Rust, sem substituir silenciosamente o comando do sistema.
 - Resumido o cabeçalho de dependências dos folderstamps em uma única linha `Tooling:`, preservando os caminhos/faltas de `stat`, Git, Gitoxide, Pijul, Iroh, Python BLAKE3 e IPFS sem transformar cada stamp em um transcript de instalador.
 - Iroh passou a produzir o `CIDv1/raw/BLAKE3` padrão: o script converte seu BlobId BLAKE3 em CIDv1 usando apenas a biblioteca padrão do Python; IPFS/Kubo continua como fallback de compatibilidade.
+- Adicionado instalador de Kubo/IPFS por GitHub Releases e alinhado o fallback Kubo para `--cid-version=1 --raw-leaves --hash=blake3`, produzindo o mesmo CIDv1/raw/BLAKE3 do caminho Iroh quando ambos processam um arquivo único.
 - Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
 - Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
 - Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.

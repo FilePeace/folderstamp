@@ -67,3 +67,4 @@ Detect the platform before choosing paths or install commands. Consider at least
 
 - Prefer the neutral label `CID hash:` instead of brand-specific labels such as `IPFS hash:`.
 - When implementing CID fallbacks, document whether the implementation is basic/single-block or feature-complete. Never label a raw Iroh BLAKE3 BlobId as a CID; construct a CIDv1 explicitly when that is what is emitted.
+- When comparing compatible single-file providers, use the same CIDv1/raw codec and BLAKE3 multihash settings; validate the resulting CID against Kubo's `ipfs add --only-hash --cid-version=1 --raw-leaves --hash=blake3`.
