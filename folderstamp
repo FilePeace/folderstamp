@@ -123,7 +123,8 @@ install_release_asset() {
     local label="$2"
     local asset_regex="$3"
     local bin_name="$4"
-    local os_token arch token url archive workdir dest
+    local release_tag="${5:-latest}"
+    local os_token arch token url archive workdir dest release_api
 
     if ! command_exists curl; then
         echo "Cannot auto-install $label: curl is missing."
@@ -152,7 +153,13 @@ install_release_asset() {
         return 1
     fi
 
-    url="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" | python3 -c '
+    if [[ "$release_tag" == "latest" ]]; then
+        release_api="https://api.github.com/repos/$repo/releases/latest"
+    else
+        release_api="https://api.github.com/repos/$repo/releases/tags/$release_tag"
+    fi
+
+    url="$(curl -fsSL "$release_api" | python3 -c '
 import json, re, sys
 os_token = sys.argv[1].lower()
 arch = sys.argv[2].lower()
@@ -182,7 +189,7 @@ for asset in data.get("assets", []):
     archive="$workdir/asset.tar.gz"
     dest="$(install_bin_dir)/$bin_name"
 
-    echo "Downloading $label from: $url"
+    echo "Downloading $label ($release_tag) from: $url"
     curl -fL "$url" -o "$archive"
     tar -xzf "$archive" -C "$workdir"
 
@@ -226,11 +233,36 @@ offer_gitoxide_install() {
     fi
 }
 
-offer_kubo_install() {
-    if ask_yes_no "Install Kubo/IPFS from GitHub Releases now?"; then
-        install_release_asset "ipfs/kubo" "Kubo/IPFS" 'kubo.*(tar\.gz|tgz)$' "ipfs"
+install_rust_stat_release() {
+    local bin_dir
+
+    # uutils ships one multicall `coreutils` binary. Create a tiny `stat` launcher
+    # beside it so the rest of folderstamp can keep using the normal command name.
+    install_release_asset "uutils/coreutils" "uutils/coreutils" 'coreutils.*(tar\.gz|tgz)$' "coreutils" || return 1
+    bin_dir="$(install_bin_dir)"
+    cat > "$bin_dir/stat" <<'STAT_WRAPPER'
+#!/bin/sh
+exec "$(dirname "$0")/coreutils" stat "$@"
+STAT_WRAPPER
+    chmod +x "$bin_dir/stat"
+    echo "uutils/coreutils stat installed at $bin_dir/stat"
+}
+
+offer_rust_stat_install() {
+    if ask_yes_no "Install the Rust uutils/coreutils stat replacement from GitHub Releases now?"; then
+        install_rust_stat_release
     else
-        kubo_install_offer
+        echo "Rust alternative: https://github.com/uutils/coreutils/releases/latest"
+    fi
+}
+
+# Iroh's current releases ship relay/DNS binaries, not the blob CLI. v0.28.1 is
+# the newest release line that ships the standalone `iroh` blob command.
+offer_iroh_install() {
+    if ask_yes_no "Install the Iroh blob CLI from GitHub Releases now?"; then
+        install_release_asset "n0-computer/iroh" "Iroh blob CLI" '(^|/)iroh-v.*(tar\.gz|tgz)$' "iroh" "v0.28.1"
+    else
+        echo "Iroh blob CLI release: https://github.com/n0-computer/iroh/releases/tag/v0.28.1"
     fi
 }
 
@@ -277,17 +309,38 @@ check_optional_dependency() {
     return 1
 }
 
-kubo_install_offer() {
-    cat <<'KUBO_EOF'
-Dependency notice: ipfs is not installed.
-Kubo is the reference IPFS implementation; you can download it from GitHub Releases:
-  https://github.com/ipfs/kubo/releases/latest
-Choose the release asset that matches your OS and CPU architecture, then run the install script shipped in the archive.
-Linux example after downloading the correct tarball:
-  tar -xzf kubo_*.tar.gz
-  cd kubo && sudo ./install.sh
-Termux users should install into $PREFIX/bin instead of relying on sudo.
-KUBO_EOF
+check_stat_tooling() {
+    if command_exists stat; then
+        echo "Dependency OK: stat ($(command -v stat))"
+        return 0
+    fi
+
+    echo "Dependency missing: stat"
+    echo "Suggested install: $(install_command_for coreutils)"
+    offer_rust_stat_install || true
+    return 1
+}
+
+check_iroh_tooling() {
+    if command_exists iroh; then
+        echo "Optional dependency OK: iroh ($(command -v iroh))"
+        return 0
+    fi
+
+    echo "Optional dependency missing: iroh (preferred BLAKE3 content-addressing tool)"
+    offer_iroh_install || true
+    return 1
+}
+
+check_python_blake3() {
+    if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
+        echo "Optional fallback OK: python3 blake3 module"
+        return 0
+    fi
+
+    echo "Optional fallback missing: Python 3 with the blake3 module"
+    echo "Suggested install: python3 -m pip install --user blake3"
+    return 1
 }
 
 check_dependency() {
@@ -301,21 +354,19 @@ check_dependency() {
 
     echo "Dependency missing: $command_name"
 
-    if [[ "$command_name" == "ipfs" ]]; then
-        offer_kubo_install || true
-    else
-        echo "Suggested install: $(install_command_for "$package_name")"
-    fi
+    echo "Suggested install: $(install_command_for "$package_name")"
 
     return 1
 }
 
 print_dependency_report() {
     echo "Dependency check:"
-    check_dependency stat coreutils || true
+    check_stat_tooling || true
     check_git_tooling || true
     check_optional_dependency pijul pijul || true
-    check_dependency ipfs kubo || true
+    check_iroh_tooling || true
+    check_python_blake3 || true
+    check_optional_dependency ipfs kubo || true
 }
 
 print_storage_details() {
@@ -401,7 +452,7 @@ def b58encode(data: bytes) -> str:
     while n:
         n, rem = divmod(n, 58)
         chars.append(ALPHABET[rem])
-    prefix = "1" * (len(data) - len(data.lstrip(b"\\0")))
+    prefix = "1" * (len(data) - len(data.lstrip(b"\0")))
     return prefix + "".join(reversed(chars or ["1"]))
 
 path = sys.argv[1]
@@ -419,15 +470,59 @@ print(b58encode(multihash))
 PY_CID
 }
 
-print_cid_hash() {
+cid_v1_blake3_python() {
     local file="$1"
 
-    if command_exists ipfs; then
-        echo "CID hash: $(ipfs add -q --only-hash "$file")"
+    python3 - "$file" <<'PY_BLAKE3'
+import base64
+import sys
+import blake3
+
+
+def varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+with open(sys.argv[1], "rb") as handle:
+    digest = blake3.blake3(handle.read()).digest()
+
+# CIDv1 + raw codec (0x55) + BLAKE3-256 multihash (0x1e, 32 bytes).
+cid = varint(1) + varint(0x55) + varint(0x1e) + varint(len(digest)) + digest
+print("b" + base64.b32encode(cid).decode("ascii").lower().rstrip("="))
+PY_BLAKE3
+}
+
+iroh_blake3_hash() {
+    local file="$1"
+    local output hash
+
+    # The legacy Iroh CLI starts a local node when asked, then reports the blob hash.
+    output="$(iroh --start blobs add --no-ticket "$file" 2>&1)" || return 1
+    hash="$(printf '%s\n' "$output" | sed -nE 's/^(Blob )?[Hh]ash:?[[:space:]]+([^[:space:]]+).*$/\2/p' | head -n1)"
+    [[ -n "$hash" ]] || return 1
+    printf '%s\n' "$hash"
+}
+
+print_cid_hash() {
+    local file="$1"
+    local hash
+
+    if command_exists iroh && hash="$(iroh_blake3_hash "$file")"; then
+        # Iroh exposes a BLAKE3 BlobId, not an IPFS CID. Name it accurately.
+        echo "Content hash (Iroh BLAKE3): $hash"
+    elif command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
+        echo "CID hash (CIDv1/raw/BLAKE3): $(cid_v1_blake3_python "$file")"
+    elif command_exists ipfs; then
+        # Kubo remains compatible, but is deliberately not the default provider.
+        echo "CID hash (Kubo/IPFS fallback): $(ipfs add -q --only-hash "$file")"
     elif command_exists python3; then
         echo "CID hash (CIDv0 basic): $(cid_v0_basic_python "$file")"
     else
-        echo "CID hash: unavailable (install Kubo/IPFS, Iroh, or python3 for the basic CIDv0 fallback)"
+        echo "CID hash: unavailable (install Iroh, Python 3 + blake3, or Kubo/IPFS)"
     fi
 }
 

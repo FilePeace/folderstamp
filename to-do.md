@@ -36,10 +36,10 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 
 ## Portabilidade e dependências
 
-- [ ] Evoluir o fallback `CIDv0 basic` para suportar chunking, diretórios e CIDv1/raw leaves.
-- [ ] Estudar Iroh como alternativa Rust para gerar CIDv0 e CIDv1 dos arquivos sem depender diretamente do Kubo/IPFS.
+- [ ] Evoluir o fallback `CIDv0 basic` para suportar chunking, diretórios e CIDv1/raw leaves; validar os CIDs BLAKE3 contra ferramentas do ecossistema Iroh.
+- [ ] Migrar do CLI Iroh legado v0.28.1 para uma interface atual de Iroh assim que Releases oficiais voltarem a publicar um CLI de blobs.
 - [ ] Expandir a detecção de package managers além de `apt`, `dnf`, `pacman`, `apk`, `zypper`, `pkg` e Cygwin setup.
-- [ ] Criar instalador assistido para Kubo/IPFS com seleção automática de arquitetura.
+- [ ] Criar instalador assistido opcional para Kubo/IPFS com seleção automática de arquitetura.
 - [ ] Adicionar checks para dependências opcionais como `df`, `awk`, `sed`, `find`, `tar` e `curl`.
 - [ ] Documentar diferenças entre GNU/Linux, Termux, Cygwin e RedoxOS.
 

@@ -30,7 +30,7 @@ Detect the platform before choosing paths or install commands. Consider at least
   - `lsblk` for Linux storage details, then `df -hP` as fallback.
   - Git metadata via `git`, with Gitoxide/`gix` as a supported alternative where possible.
   - Pijul metadata when `.pijul` exists and `pijul` is installed.
-- Optional tools should not break the main script unless the user explicitly requested that feature.
+- Optional tools should not break the main script unless the user explicitly requested that feature. Prefer Iroh/BLAKE3 for new content-addressing work; keep Kubo/IPFS as a compatibility fallback.
 
 ## Interactive installers
 
@@ -64,4 +64,4 @@ Detect the platform before choosing paths or install commands. Consider at least
 ## CID naming
 
 - Prefer the neutral label `CID hash:` instead of brand-specific labels such as `IPFS hash:`.
-- When implementing CID fallbacks, document whether the implementation is basic/single-block or feature-complete.
+- When implementing CID fallbacks, document whether the implementation is basic/single-block or feature-complete. Never label a raw Iroh BLAKE3 BlobId as a CID; construct a CIDv1 explicitly when that is what is emitted.

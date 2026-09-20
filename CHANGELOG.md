@@ -7,9 +7,9 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 ## [r6] - 2026-08-15
 
 ### Added
-- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, `git`/Gitoxide, `pijul` e `ipfs`.
+- Adicionado relatório de dependências no `folderstamp`, detectando `stat`, o `stat` de uutils/coreutils, `git`/Gitoxide, `pijul`, Iroh, Python + `blake3` e `ipfs`.
 - Renomeado o rótulo de saída de `IPFS hash:` para `CID hash:` para cobrir IPFS, Iroh e outros ecossistemas que usam CID sem acoplar marca.
-- Iniciada implementação básica de geração de CIDv0 sem Kubo/IPFS usando Python 3 para arquivos single-block UnixFS/DAG-PB.
+- Implementado fallback Python + `blake3` que gera CIDv1 raw/BLAKE3; o estudo CIDv0 single-block UnixFS/DAG-PB segue disponível como último fallback Python.
 - Alterado `save` para armazenar novos stamps em `.meta/folderstamp/` em vez de criar `.folderstamp` na raiz.
 - Adicionada migração automática de `.folderstamp` legado para `.meta/folderstamp/.folderstamp.1`, criando o próximo número disponível para novos stamps.
 - Adicionada tarefa para avaliar Iroh como alternativa Rust para gerar CIDv0 e CIDv1.
@@ -19,14 +19,14 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Criado `SKILL.md` com práticas de Bash portátil, diagnósticos, dependências e documentação usadas nesta sequência de patches.
 - Adicionada opção orientada para instalar Git pelo package manager ou Gitoxide via GitHub Releases quando nenhum dos dois está instalado.
 - Adicionado suporte a repositórios Pijul ao lado do Git, exibindo canal atual quando `.pijul` existe.
-- Adicionada oferta de instalação do Kubo/IPFS via GitHub Releases quando `ipfs` não está instalado.
+- Adicionada oferta de instalação do `stat` Rust de uutils/coreutils e do CLI de blobs Iroh via GitHub Releases.
 - Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
 - Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
 - Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.
 - Adicionado suporte explícito à detecção de plataforma para Termux, Cygwin e RedoxOS, mantendo compatibilidade com Linux padrão.
 - Adicionada saída `Platform:` ao comando `folderstamp display`, facilitando debug em ambientes diferentes.
 - Adicionado fallback para detalhes de armazenamento: usa `lsblk` quando disponível e recorre a `df -hP` quando `lsblk` não existe.
-- Adicionado fallback para IPFS ausente, exibindo uma mensagem clara quando o comando `ipfs` não está instalado.
+- Iroh/BLAKE3 passou a ser o caminho padrão de endereçamento de conteúdo; Kubo/IPFS permanece apenas como fallback compatível.
 - Adicionada seleção automática de diretório de instalação no `install.sh`:
   - Termux: `${PREFIX}/bin` ou `/data/data/com.termux/files/usr/bin`.
   - Cygwin: `/usr/local/bin`.
