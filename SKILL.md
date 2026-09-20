@@ -62,6 +62,7 @@ Detect the platform before choosing paths or install commands. Consider at least
 - Prefer storing generated metadata under `.meta/<tool-name>/` instead of cluttering the project root.
 - When migrating legacy root metadata files, preserve them by numbering old outputs before creating the next stamp.
 - Keep durable stamps concise: emit one environment/tooling summary line with command paths or `missing`, not a multi-line dependency-installation transcript. Put prompts and remediation guidance in an explicit diagnostic flow instead.
+- Keep generated stamp files out of their own input. Rotate them as `.folderstamp`, `.folderstamp1`, `.folderstamp2`, and prune internal metadata/VCS directories during recursive walks. Support a project-root `.folderstampignore` with ordered gitignore-like patterns and `!` re-inclusions.
 
 ## CID naming
 

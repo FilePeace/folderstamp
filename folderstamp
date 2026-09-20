@@ -709,23 +709,26 @@ next_folderstamp_path() {
     local max=0
     local path name number
 
-    if [[ -f "$store_dir/.folderstamp" ]]; then
-        max=1
-    fi
-
-    for path in "$store_dir"/.folderstamp.*; do
+    # New rotations are .folderstamp, .folderstamp1, .folderstamp2, ... . Also
+    # recognize the old dotted form so an upgrade never overwrites history.
+    for path in "$store_dir"/.folderstamp "$store_dir"/.folderstamp[0-9]* "$store_dir"/.folderstamp.[0-9]*; do
         [[ -e "$path" ]] || continue
         name="${path##*/}"
-        number="${name##*.}"
+        if [[ "$name" == ".folderstamp" ]]; then
+            max=0
+            continue
+        fi
+        number="${name#.folderstamp}"
+        number="${number#.}"
         if [[ "$number" =~ ^[0-9]+$ ]] && (( number > max )); then
             max="$number"
         fi
     done
 
-    if (( max == 0 )); then
+    if [[ ! -e "$store_dir/.folderstamp" ]]; then
         echo "$store_dir/.folderstamp"
     else
-        echo "$store_dir/.folderstamp.$((max + 1))"
+        echo "$store_dir/.folderstamp$((max + 1))"
     fi
 }
 
@@ -737,15 +740,68 @@ prepare_folderstamp_output_path() {
     mkdir -p "$store_dir"
 
     if [[ -f "$legacy_path" ]]; then
-        if [[ ! -e "$store_dir/.folderstamp.1" ]]; then
-            mv "$legacy_path" "$store_dir/.folderstamp.1"
-        else
-            mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
-        fi
+        mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
     fi
 
     next_path="$(next_folderstamp_path "$store_dir")"
     echo "$next_path"
+}
+
+folderstamp_is_internal() {
+    local file="${1#./}"
+
+    case "$file" in
+        .git|.git/*|.meta/folderstamp|.meta/folderstamp/*|.folderstamp|.folderstamp[0-9]*|.folderstampignore)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+folderstamp_ignore_matches() {
+    local file="${1#./}"
+    local pattern="$2"
+    local basename="${file##*/}"
+    local anchored=0 directory_only=0
+
+    [[ "$pattern" == /* ]] && anchored=1 && pattern="${pattern#/}"
+    [[ "$pattern" == */ ]] && directory_only=1 && pattern="${pattern%/}"
+    [[ -z "$pattern" ]] && return 1
+
+    if (( anchored )); then
+        [[ "$file" == $pattern || "$file" == $pattern/* ]]
+    elif (( directory_only )); then
+        [[ "$file" == $pattern/* || "$file" == */$pattern/* ]]
+    elif [[ "$pattern" == */* ]]; then
+        [[ "$file" == $pattern || "$file" == */$pattern ]]
+    else
+        [[ "$basename" == $pattern || "$file" == */$pattern ]]
+    fi
+}
+
+folderstamp_is_ignored() {
+    local file="$1"
+    local line pattern ignored=1
+
+    folderstamp_is_internal "$file" && return 0
+    [[ -f ".folderstampignore" ]] || return 1
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" == !* ]]; then
+            pattern="${line#!}"
+            folderstamp_ignore_matches "$file" "$pattern" && ignored=1
+        elif folderstamp_ignore_matches "$file" "$line"; then
+            ignored=0
+        fi
+    done < .folderstampignore
+
+    (( ignored == 0 ))
+}
+
+should_stamp_path() {
+    [[ -f "$1" ]] && ! folderstamp_is_ignored "$1"
 }
 
 save_folderstamp() {
@@ -780,26 +836,46 @@ print_pijul_details
 
 if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
    then
-find . -type f -name '*' -print0 | while IFS= read -r -d '' file
+# Do not even traverse internal repositories or the stamp store.
+find . \( -type d \( -name .git -o -path './.meta/folderstamp' \) -prune \) -o -type f -print0 | while IFS= read -r -d '' file
 do
-    stamp_path "$file"
+    should_stamp_path "$file" && stamp_path "$file"
 done
 # from https://stackoverflow.com/a/25948226/5623661
    else
 # NOTE : Quote it else use array to avoid problems #
 for file in ./*
 do
-  stamp_path "$file"
+  should_stamp_path "$file" && stamp_path "$file"
 # from https://stackoverflow.com/a/25948226/5623661
 done
 # based from https://www.cyberciti.biz/faq/bash-loop-over-file/
 fi
 }
 
-if [ "$1" = "save" ];then
+print_help() {
+    cat <<'HELP'
+Usage: folderstamp <display|save> [--recursive|-r]
+
+Commands:
+  display              Print a stamp for files in the current directory.
+  save                 Save a stamp under .meta/folderstamp/.
+
+Options:
+  --recursive, -r      Include files below the current directory.
+  --help, -h           Show this help.
+
+Ignored by default: .git/, .meta/folderstamp/, .folderstamp*, and
+.folderstampignore. Add gitignore-style patterns to .folderstampignore;
+later !patterns re-include matching files.
+HELP
+}
+
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+   print_help
+elif [ "$1" = "save" ];then
    save_folderstamp "$1" "$2"
-fi
-if [ "$1" = "display" ];then
+elif [ "$1" = "display" ];then
    display "$1" "$2"
 fi
 
