@@ -20,6 +20,8 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Adicionada opção orientada para instalar Git pelo package manager ou Gitoxide via GitHub Releases quando nenhum dos dois está instalado.
 - Adicionado suporte a repositórios Pijul ao lado do Git, exibindo canal atual quando `.pijul` existe.
 - Adicionada instalação interativa do `stat` normal pelo package manager da plataforma; uutils/coreutils via GitHub Releases ficou como alternativa compatível em Rust, sem substituir silenciosamente o comando do sistema.
+- Resumido o cabeçalho de dependências dos folderstamps em uma única linha `Tooling:`, preservando os caminhos/faltas de `stat`, Git, Gitoxide, Pijul, Iroh, Python BLAKE3 e IPFS sem transformar cada stamp em um transcript de instalador.
+- Iroh passou a produzir o `CIDv1/raw/BLAKE3` padrão: o script converte seu BlobId BLAKE3 em CIDv1 usando apenas a biblioteca padrão do Python; IPFS/Kubo continua como fallback de compatibilidade.
 - Adicionadas sugestões de instalação por package manager para dependências ausentes em Termux, Cygwin, RedoxOS e Linux comum.
 - Adicionado `.folderstamp` versionado com o stamp do ambiente atual.
 - Criado `to-do.md` organizado a partir do antigo `Tasks.txt`, com novas ideias de portabilidade, documentação e UX.

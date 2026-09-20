@@ -438,14 +438,36 @@ check_dependency() {
     return 1
 }
 
+tool_status() {
+    local command_name="$1"
+
+    if command_exists "$command_name"; then
+        printf '%s=%s' "$command_name" "$(command -v "$command_name")"
+    else
+        printf '%s=missing' "$command_name"
+    fi
+}
+
+python_blake3_status() {
+    if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
+        printf 'python-blake3=available'
+    else
+        printf 'python-blake3=missing'
+    fi
+}
+
 print_dependency_report() {
-    echo "Dependency check:"
-    check_stat_tooling || true
-    check_git_tooling || true
-    check_optional_dependency pijul pijul || true
-    check_iroh_tooling || true
-    check_python_blake3 || true
-    check_optional_dependency ipfs kubo || true
+    # A stamp is an enduring record, not an installer transcript. Keep the
+    # environment summary on one line; interactive install guidance remains in
+    # the dedicated check_* helpers for callers that need it.
+    printf 'Tooling: %s; %s; %s; %s; %s; %s; %s\n' \
+        "$(tool_status stat)" \
+        "$(tool_status git)" \
+        "$(tool_status gix)" \
+        "$(tool_status pijul)" \
+        "$(tool_status iroh)" \
+        "$(python_blake3_status)" \
+        "$(tool_status ipfs)"
 }
 
 print_storage_details() {
@@ -581,18 +603,55 @@ iroh_blake3_hash() {
 
     # The legacy Iroh CLI starts a local node when asked, then reports the blob hash.
     output="$(iroh --start blobs add --no-ticket "$file" 2>&1)" || return 1
-    hash="$(printf '%s\n' "$output" | sed -nE 's/^(Blob )?[Hh]ash:?[[:space:]]+([^[:space:]]+).*$/\2/p' | head -n1)"
+    # Iroh 0.28 prints `Blob: <BlobId>`; retain the older Hash-shaped output
+    # matcher as well so this parser stays useful across the supported CLI line.
+    hash="$(printf '%s\n' "$output" | sed -nE \
+        -e 's/^Blob:[[:space:]]+([^[:space:]]+).*$/\1/p' \
+        -e 's/^(Blob )?[Hh]ash:?[[:space:]]+([^[:space:]]+).*$/\2/p' | head -n1)"
     [[ -n "$hash" ]] || return 1
     printf '%s\n' "$hash"
 }
 
+iroh_blob_id_to_cid_v1() {
+    local blob_id="$1"
+
+    python3 - "$blob_id" <<'PY_IROH_CID'
+import base64
+import sys
+
+
+def varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+# Iroh BlobIds are unpadded base32 encodings of the BLAKE3-256 digest. Wrap
+# that digest in CIDv1/raw + the registered BLAKE3-256 multihash code (0x1e).
+blob_id = sys.argv[1]
+padded = blob_id.upper() + "=" * (-len(blob_id) % 8)
+digest = base64.b32decode(padded, casefold=True)
+if len(digest) != 32:
+    raise ValueError("an Iroh BlobId must encode a 32-byte BLAKE3 digest")
+cid = varint(1) + varint(0x55) + varint(0x1E) + varint(len(digest)) + digest
+print("b" + base64.b32encode(cid).decode("ascii").lower().rstrip("="))
+PY_IROH_CID
+}
+
 print_cid_hash() {
     local file="$1"
-    local hash
+    local hash cid
 
-    if command_exists iroh && hash="$(iroh_blake3_hash "$file")"; then
-        # Iroh exposes a BLAKE3 BlobId, not an IPFS CID. Name it accurately.
-        echo "Content hash (Iroh BLAKE3): $hash"
+    if command_exists iroh && hash="$(iroh_blake3_hash "$file")" && \
+        command_exists python3 && cid="$(iroh_blob_id_to_cid_v1 "$hash")"; then
+        # Iroh calculates the preferred BLAKE3 digest; standard-library Python
+        # merely wraps it in CIDv1/raw, without needing the blake3 module.
+        echo "CID hash (CIDv1/raw/BLAKE3 via Iroh): $cid"
+    elif command_exists iroh && hash="$(iroh_blake3_hash "$file")"; then
+        echo "Content hash (Iroh BLAKE3): $hash (install Python 3 for CIDv1 wrapping)"
     elif command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         echo "CID hash (CIDv1/raw/BLAKE3): $(cid_v1_blake3_python "$file")"
     elif command_exists ipfs; then
