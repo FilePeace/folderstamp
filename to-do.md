@@ -4,6 +4,8 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 
 ## Próximas prioridades
 
+- [ ] Implementar uma ferramenta/rotina própria em Bash para codificar CIDv1/raw/BLAKE3 compatível com o digest BLAKE3-256 utilizado pelo Iroh: varints, codec raw `0x55`, multihash BLAKE3 `0x1e`, comprimento de 32 bytes e base32 multibase lowercase. Não depender de Python.
+- [ ] Validar vetores de teste do encoder Bash contra uma implementação independente e contra Iroh, sem adicionar blobs ao armazenamento local.
 - [ ] Implementar flag `--hash` para controlar quando o CID deve ser calculado.
 - [ ] Registrar a data/hora exata no fim de cada snapshot.
 - [ ] Adicionar opção para registrar o número do bloco Ethereum mais recente no momento do stamp.
@@ -52,7 +54,7 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 - [ ] Testar assets e instalação de ferramentas externas por arquitetura, ABI/libc e plataforma antes de habilitar autodownload em cada plataforma.
 - [ ] Verificar assinaturas/checksums dos downloads de Kubo, Iroh e outras ferramentas; comparar com os digests publicados pelo projeto antes de extrair ou instalar.
 - [ ] Testar a seleção de assets Android/Termux: exibir `uname -m`, pedir confirmação explícita, executar teste de versão e preservar a instalação anterior quando o binário não for executável.
-- [ ] Migrar do CLI Iroh legado v0.28.1 para uma interface atual de Iroh assim que Releases oficiais voltarem a publicar um CLI de blobs.
+- [ ] Avaliar uma integração de validação opcional com Iroh/Kubo que compare digest/CID sem gravar o conteúdo em armazenamento local; manter essa validação fora do caminho normal de snapshot.
 - [ ] Expandir a detecção de package managers além de `apt`, `dnf`, `pacman`, `apk`, `zypper`, `pkg` e Cygwin setup.
 
 ## Controle de versão alternativo
