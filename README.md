@@ -5,7 +5,9 @@ Folderstamp creates a human-readable snapshot of regular files in the current di
 ## Requirements
 
 - Bash 4+ (the script is written for Bash, not POSIX sh).
-- `stat` for file metadata.
+- `stat` for file metadata. The standard Termux bootstrap normally includes `coreutils`, which provides `stat`; if it is missing, install/restore it with `pkg install coreutils`.
+- `readlink` to display symbolic-link targets (optional; without it, the link metadata is still shown).
+- `sync` and `wc` for durable checkpoint/resume support when using `save`.
 - `find` for recursive mode.
 - `df` and `awk` are optional and used for storage diagnostics.
 - A content-hash provider is optional:
@@ -56,18 +58,23 @@ folderstamp display
 folderstamp display --recursive
 folderstamp save
 folderstamp save --recursive
+folderstamp resume .meta/folderstamp/.folderstamp.incomplete.ABC123/folderstamp.incomplete
 folderstamp --help
 ```
 
 - `display` writes the snapshot to standard output.
 - `save` stores a completed snapshot under `.meta/folderstamp/`.
-- Existing snapshots are rotated to the next available name and are not intentionally overwritten.
+- A save is created in a dedicated workspace with a `folderstamp.incomplete` file and a checkpoint. After every completed file entry, the output and checkpoint are synced before progress advances.
+- If the process fails or the device loses power, the `.incomplete` file and its checkpoint are kept. Folderstamp does not discard partial work.
+- Resume by passing the selected `folderstamp.incomplete` path to `folderstamp resume PATH`. Resume from the original directory. The saved file list preserves the original traversal order; do not modify the source tree before resuming.
+- On resume, bytes beyond the last durable checkpoint are truncated and the current uncommitted entry is regenerated. If the incomplete file is shorter than the checkpoint, Folderstamp refuses to guess or discard data.
+- Existing completed snapshots are rotated to the next available name and are not intentionally overwritten.
 
 ## Included and excluded paths
 
 - Regular files are included.
 - Hidden files are included in both recursive and non-recursive modes.
-- Symbolic links are skipped. This avoids following links outside the selected tree or recording ambiguous link targets.
+- Symbolic links are recorded as links: `stat` metadata and the link target are displayed, including for dangling links. The link target is never traversed, and no content hash is calculated for a symlink.
 - Git, Pijul, Mercurial, and Subversion metadata directories are pruned.
 - Folderstamp's own metadata directory and legacy `.folderstamp*` files are excluded.
 - `.folderstampignore` supports a deliberately limited gitignore-like pattern syntax. It is not a complete implementation of Git's ignore engine.
@@ -81,7 +88,7 @@ folderstamp --help
 - The installer stages the new executable beside its destination and preserves an existing installation in a timestamped backup before replacing it.
 - Release-installed helper binaries use the same backup-before-replace approach.
 
-These measures reduce accidental clobbering and partial snapshots. They are not a substitute for backups, and simultaneous writers on unusual network filesystems may still have filesystem-specific semantics.
+These measures reduce accidental clobbering and preserve recoverable work after interruption. They are not a substitute for backups, and simultaneous writers on unusual network filesystems may still have filesystem-specific semantics.
 
 ## Content identifiers and limitations
 
@@ -93,13 +100,18 @@ These measures reduce accidental clobbering and partial snapshots. They are not 
 
 ## Termux notes
 
-Termux is an Android environment, not a conventional GNU/Linux distribution. Linux release binaries may target glibc or musl and are not automatically compatible with Android's Bionic environment. For that reason, prefer Termux packages or a native Termux build for optional tools; do not assume that an asset named `linux-arm64` will run on Android.
+Termux is an Android environment, not a conventional GNU/Linux distribution. Its standard bootstrap normally includes `coreutils` and the `stat` command; install/restore it with `pkg install coreutils` only if it is missing. Folderstamp keeps the optional Iroh and Kubo download offers available in Termux, but requires an explicit `yes`, displays the phone's `uname -m` architecture, and tests the downloaded executable before replacing anything. The upstream assets currently use generic Linux targets, not a dedicated Android/Bionic target, so successful execution is not guaranteed. A failed test leaves the previous executable untouched and keeps the downloaded archive for inspection.
+
+Support for saving snapshots directly to removable SD-card locations on Android/Termux is not implemented yet. See the SD-card task in `to-do.md` for the planned second phase.
 
 The main script uses `#!/usr/bin/env bash` instead of assuming Bash exists at `/bin/bash`. Start the installer from the repository directory so it can copy the local `folderstamp` script.
 
 ## Troubleshooting
 
-- `stat: command not found`: install Termux `coreutils` or the equivalent package for your platform.
+- `stat: command not found`: Termux normally includes it; restore it with `pkg install coreutils`.
+- `readlink: command not found`: install the platform's `readlink` utility to display symbolic-link targets.
+- `sync` or `wc` missing: install the platform's core utilities before using resumable `save`.
+- A `.incomplete` file remains: resume it from the original source directory with `folderstamp resume PATH`.
 - Recursive mode cannot start: install `find` (Termux package: `findutils`).
 - No CID is shown: continue using metadata snapshots, or install one of the optional content-hash providers.
 - Installer refuses to migrate a legacy stamp: inspect the path manually. It may be a symlink or special file, and Folderstamp intentionally will not move it automatically.
