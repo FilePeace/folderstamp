@@ -6,6 +6,9 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 
 ## [r6.1] - 2026-11-17
 
+### Added
+- O instalador POSIX agora detecta Termux e prepara automaticamente Bash, Coreutils e Findutils via `pkg`, instalando apenas os pacotes ausentes antes de substituir qualquer instalação existente.
+
 ### Fixed
 - Alterado o shebang do executável para `#!/usr/bin/env bash`, evitando assumir que Bash existe em `/bin/bash` em ambientes como Termux.
 - Corrigido o tratamento de argumentos ausentes e comandos desconhecidos.
