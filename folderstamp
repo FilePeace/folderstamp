@@ -205,9 +205,40 @@ for asset in data.get("assets", []):
         return 1
     fi
 
-    cp "$found" "$dest"
-    chmod +x "$dest"
+    # Stage beside the destination. Preserve an existing executable before
+    # publishing a replacement, rather than truncating it in place.
+    local dest_dir stage backup
+    dest_dir="$(dirname "$dest")"
+    mkdir -p "$dest_dir"
+    stage="$(mktemp "$dest_dir/.folderstamp.asset.XXXXXX")" || return 1
+    if ! cp "$found" "$stage" || ! chmod +x "$stage"; then
+        rm -f "$stage"
+        echo "Could not stage $label; existing installation was not changed." >&2
+        return 1
+    fi
+
+    backup=""
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        backup="$dest.backup.$(date +%Y%m%d%H%M%S 2>/dev/null || echo unknown)"
+        if [[ -e "$backup" || -L "$backup" ]] || ! mv "$dest" "$backup"; then
+            rm -f "$stage"
+            echo "Could not preserve existing $dest; installation aborted." >&2
+            return 1
+        fi
+    fi
+
+    if ! mv "$stage" "$dest"; then
+        if [[ -n "$backup" && ! -e "$dest" ]]; then
+            mv "$backup" "$dest" || echo "WARNING: restore manually from $backup" >&2
+        fi
+        rm -f "$stage"
+        echo "Could not publish $label." >&2
+        return 1
+    fi
+
+    rm -rf "$workdir"
     echo "$label installed at $dest"
+    [[ -z "$backup" ]] || echo "Previous executable preserved at: $backup"
 }
 
 ask_yes_no() {
