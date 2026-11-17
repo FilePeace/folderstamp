@@ -539,8 +539,11 @@ print_storage_details() {
     fi
 
     if [[ -n "$mount_source" ]] && command_exists lsblk && command_exists awk; then
-        if lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null |
-            awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}' ; then
+        local lsblk_output
+        lsblk_output="$(lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null |
+            awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print $0}')" || lsblk_output=""
+        if [[ -n "$lsblk_output" ]]; then
+            printf 'Storage Device: %s\n' "$lsblk_output"
             return 0
         fi
     fi
