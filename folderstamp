@@ -530,25 +530,35 @@ print_dependency_report() {
 }
 
 print_storage_details() {
-    local mount_source
-    mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')"
+    local mount_source df_output
 
-    if [[ -n "$mount_source" ]] && command_exists lsblk; then
-        lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null \
-            | awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}'
-        return 0
+    mount_source=""
+    if command_exists df && command_exists awk; then
+        # Avoid assuming GNU df options are present on Android/toybox systems.
+        mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')" || mount_source=""
     fi
 
-    if command_exists df; then
-        df -hP . 2>/dev/null | awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}'
-        return 0
+    if [[ -n "$mount_source" ]] && command_exists lsblk && command_exists awk; then
+        if lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null |
+            awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}' ; then
+            return 0
+        fi
+    fi
+
+    if command_exists df && command_exists awk; then
+        df_output="$(df -hP . 2>/dev/null)" || df_output=""
+        if [[ -n "$df_output" ]]; then
+            printf '%s\n' "$df_output" |
+                awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}' || true
+            return 0
+        fi
     fi
 
     echo "Storage Device: unavailable on this platform"
 }
 
 print_git_details() {
-    local current_branch first_remote_name first_remote_url
+    local current_branch first_remote_name first_remote_url remote_scheme remote_rest
 
     if [[ -d ".git" ]] && command_exists git; then
         current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
@@ -557,6 +567,12 @@ print_git_details() {
 
         if [[ -n "$first_remote_name" ]]; then
             first_remote_url="$(git remote get-url "$first_remote_name" 2>/dev/null || true)"
+            # Prevent embedded HTTPS credentials/tokens leaking into a snapshot.
+            if [[ "$first_remote_url" == *://*@* ]]; then
+                remote_scheme="${first_remote_url%%://*}"
+                remote_rest="${first_remote_url#*://}"
+                first_remote_url="${remote_scheme}://[credentials-redacted]@${remote_rest#*@}"
+            fi
             echo "First Git Remote: $first_remote_name - URL: ${first_remote_url:-unknown}"
         else
             echo "First Git Remote: none"
@@ -769,7 +785,7 @@ next_folderstamp_path() {
         fi
     done
 
-    if [[ ! -e "$store_dir/.folderstamp" ]]; then
+    if [[ ! -e "$store_dir/.folderstamp" && ! -L "$store_dir/.folderstamp" ]]; then
         echo "$store_dir/.folderstamp"
     else
         echo "$store_dir/.folderstamp$((max + 1))"
