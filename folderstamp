@@ -1,4 +1,5 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 FOLDERSTAMP_VERSION="r6"
 
@@ -690,10 +691,19 @@ print_cid_hash() {
 
 stamp_path() {
     local file="$1"
-    local all
 
-    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_cid_hash "$file"; printf '%s\n' '------------------------------')
-    printf "%s" "$all" | sed 's/%/%%/g'
+    # Stream output directly; do not buffer whole metadata or rewrite percent signs.
+    printf '\n'
+    if command_exists stat; then
+        if ! stat "$file" 2>/dev/null; then
+            printf 'stat failed for: %s\n' "$file"
+        fi
+    else
+        printf 'stat unavailable for: %s\n' "$file"
+        printf 'Suggested install: %s\n' "$(install_command_for coreutils)"
+    fi
+    print_cid_hash "$file"
+    printf '%s\n' '------------------------------'
 }
 
 folderstamp_store_dir() {
@@ -732,30 +742,58 @@ next_folderstamp_path() {
     fi
 }
 
-prepare_folderstamp_output_path() {
+prepare_folderstamp_store() {
     local store_dir legacy_path next_path
+
     store_dir="$(folderstamp_store_dir)"
     legacy_path="$(legacy_folderstamp_path)"
 
+    # Do not follow metadata symlinks or migrate a symlink as if it were a stamp.
+    if [[ -L .meta ]] || [[ -e .meta && ! -d .meta ]]; then
+        echo "Refusing to use .meta: expected a real directory." >&2
+        return 1
+    fi
+    if [[ -L "$store_dir" ]] || [[ -e "$store_dir" && ! -d "$store_dir" ]]; then
+        echo "Refusing to use $store_dir: expected a real directory." >&2
+        return 1
+    fi
     mkdir -p "$store_dir"
 
-    if [[ -f "$legacy_path" ]]; then
-        mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
+    if [[ -L "$legacy_path" ]]; then
+        echo "Refusing to migrate legacy $legacy_path because it is a symbolic link." >&2
+        return 1
+    fi
+    if [[ -e "$legacy_path" && ! -f "$legacy_path" ]]; then
+        echo "Refusing to migrate legacy $legacy_path because it is not a regular file." >&2
+        return 1
     fi
 
-    next_path="$(next_folderstamp_path "$store_dir")"
-    echo "$next_path"
+    # Keep legacy data; never replace a numbered snapshot.
+    while [[ -f "$legacy_path" ]]; do
+        next_path="$(next_folderstamp_path "$store_dir")"
+        if ! mv -n "$legacy_path" "$next_path"; then
+            echo "Could not preserve legacy stamp $legacy_path." >&2
+            return 1
+        fi
+        # mv -n can report success without moving when another process wins.
+        [[ -e "$legacy_path" ]] || break
+    done
 }
 
 folderstamp_is_internal() {
     local file="${1#./}"
+    local basename="${file##*/}"
 
     case "$file" in
-        .git|.git/*|.meta/folderstamp|.meta/folderstamp/*|.folderstamp|.folderstamp[0-9]*|.folderstampignore)
+        .git|*/.git|.git/*|*/.git/*|        .pijul|*/.pijul|.pijul/*|*/.pijul/*|        .hg|*/.hg|.hg/*|*/.hg/*|        .svn|*/.svn|.svn/*|*/.svn/*|        .meta/folderstamp|.meta/folderstamp/*|*/.meta/folderstamp|*/.meta/folderstamp/*)
             return 0 ;;
-        *)
-            return 1 ;;
     esac
+
+    case "$basename" in
+        .folderstamp*|.folderstampignore|.git|.pijul|.hg|.svn)
+            return 0 ;;
+    esac
+    return 1
 }
 
 folderstamp_ignore_matches() {
@@ -801,56 +839,80 @@ folderstamp_is_ignored() {
 }
 
 should_stamp_path() {
-    [[ -f "$1" ]] && ! folderstamp_is_ignored "$1"
+    # Treat symlinks consistently in recursive and non-recursive mode.
+    [[ -f "$1" && ! -L "$1" ]] && ! folderstamp_is_ignored "$1"
 }
 
 save_folderstamp() {
-    local output_path
-    output_path="$(prepare_folderstamp_output_path)"
+    local store_dir temp_path output_path
 
+    store_dir="$(folderstamp_store_dir)"
+    prepare_folderstamp_store || return 1
+    command_exists mktemp || {
+        echo "Cannot save safely: mktemp is missing." >&2
+        return 1
+    }
+
+    # Build in a unique temporary file; publish only a completed snapshot.
+    temp_path="$(mktemp "$store_dir/.folderstamp.tmp.XXXXXX")" || return 1
     echo "🤓📝 Working..."
-    echo "Saving folderstamp to: $output_path"
-    display "$1" "$2" > "$output_path"
+    if ! display "$1" "$2" > "$temp_path"; then
+        rm -f "$temp_path"
+        echo "Stamp generation failed; no partial snapshot was published." >&2
+        return 1
+    fi
+
+    while :; do
+        output_path="$(next_folderstamp_path "$store_dir")"
+        if [[ -e "$output_path" || -L "$output_path" ]]; then
+            continue
+        fi
+        if mv -n "$temp_path" "$output_path" && [[ ! -e "$temp_path" ]]; then
+            break
+        fi
+        if [[ ! -e "$temp_path" ]]; then
+            echo "Could not safely publish the completed snapshot." >&2
+            return 1
+        fi
+    done
+    echo "Saved folderstamp: $output_path"
 }
 
-function display {
-rocketlaunch_dir=`pwd` #from https://unix.stackexchange.com/a/52919/470623
-echo "This folder: $rocketlaunch_dir"
-echo "Platform: $(platform_name)"
-#-
-# Add storage device details with fallbacks for Linux, Termux, Cygwin and RedoxOS.
-print_storage_details
-#-
-echo "folderstamp version: $FOLDERSTAMP_VERSION"
-if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]; then
-   method="Recursive"
-else
-   method="Non-recursive"
-fi
-echo "Method: $method"  # Add this line to show the method used
+display() {
+    local rocketlaunch_dir method file
 
-# Display current git branch and first git remote name with URL if .git folder is present
-print_dependency_report
-print_git_details
-print_pijul_details
+    rocketlaunch_dir="$(pwd)"
+    echo "This folder: $rocketlaunch_dir"
+    echo "Platform: $(platform_name)"
+    print_storage_details
+    echo "folderstamp version: $FOLDERSTAMP_VERSION"
 
-if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
-   then
-# Do not even traverse internal repositories or the stamp store.
-find . \( -type d \( -name .git -o -path './.meta/folderstamp' \) -prune \) -o -type f -print0 | while IFS= read -r -d '' file
-do
-    should_stamp_path "$file" && stamp_path "$file"
-done
-# from https://stackoverflow.com/a/25948226/5623661
-   else
-# NOTE : Quote it else use array to avoid problems #
-for file in ./*
-do
-  should_stamp_path "$file" && stamp_path "$file"
-# from https://stackoverflow.com/a/25948226/5623661
-done
-# based from https://www.cyberciti.biz/faq/bash-loop-over-file/
-fi
+    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+        method="Recursive"
+    else
+        method="Non-recursive"
+    fi
+    echo "Method: $method"
+    print_dependency_report
+    print_git_details
+    print_pijul_details
+
+    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+        command_exists find || {
+            echo "Cannot use recursive mode: find is missing." >&2
+            return 1
+        }
+        find . \( -type d \( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path '*/.meta/folderstamp' \) -prune \) -o -type f -print0 |
+        while IFS= read -r -d '' file; do
+            should_stamp_path "$file" && stamp_path "$file"
+        done
+    else
+        # Include dotfiles; nullglob makes an empty directory safe.
+        shopt -s dotglob nullglob
+        for file in ./*; do
+            should_stamp_path "$file" && stamp_path "$file"
+        done
+    fi
 }
 
 print_help() {
@@ -858,17 +920,17 @@ print_help() {
 Usage: folderstamp <display|save> [--recursive|-r]
 
 Commands:
-  display              Print a stamp for files in the current directory.
+  display              Print a stamp for regular files in the current directory.
   save                 Save a stamp under .meta/folderstamp/.
 
 Options:
   --recursive, -r      Include files below the current directory.
   --help, -h           Show this help.
 
-Ignored by default: .git/, .meta/folderstamp/, .folderstamp*, and
-.folderstampignore. Add gitignore-style patterns to .folderstampignore;
-later !patterns re-include matching files.
-HELP
+Hidden files are included. Symbolic links are skipped. VCS databases
+(.git, .pijul, .hg and .svn), the internal stamp store, and .folderstamp*
+files are excluded. .folderstampignore supports a limited gitignore-like
+pattern syntax, not every Git ignore edge case.
 }
 
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
