@@ -448,6 +448,56 @@ check_git_tooling() {
     return 1
 }
 
+install_b3sum_package() {
+    local platform
+    platform="$(platform_name)"
+
+    case "$platform" in
+        Termux)
+            if ! command_exists pkg; then
+                echo "Termux package manager 'pkg' is unavailable." >&2
+                return 1
+            fi
+            echo "Installing b3sum from the Termux package repository..."
+            pkg install -y b3sum
+            ;;
+        Linux)
+            if command_exists apt-get; then
+                echo "Installing b3sum from the Debian/Ubuntu package repository..."
+                run_privileged apt-get update && run_privileged apt-get install -y b3sum
+            else
+                echo "Automatic b3sum installation is currently configured only for Debian/Ubuntu (apt) and Termux (pkg)." >&2
+                echo "Install b3sum with your distribution package manager and run Folderstamp again." >&2
+                return 1
+            fi
+            ;;
+        *)
+            echo "Automatic b3sum installation is not configured for $(platform_name)." >&2
+            echo "Install b3sum manually, then run Folderstamp again." >&2
+            return 1
+            ;;
+    esac
+}
+
+ensure_b3sum() {
+    if command_exists b3sum; then
+        return 0
+    fi
+
+    echo "b3sum is missing; attempting package installation..."
+    if ! install_b3sum_package; then
+        echo "Could not install b3sum automatically. Snapshot metadata can still be generated, but no BLAKE3 digest will be recorded." >&2
+        return 1
+    fi
+
+    if ! command_exists b3sum; then
+        echo "Package installation returned, but b3sum is still unavailable in PATH." >&2
+        return 1
+    fi
+
+    echo "b3sum is ready: $(command -v b3sum)"
+}
+
 check_optional_dependency() {
     local command_name="$1"
     local package_name="${2:-$1}"
@@ -489,7 +539,7 @@ check_iroh_tooling() {
         return 0
     fi
 
-    echo "Optional dependency missing: iroh (preferred BLAKE3 content-addressing tool)"
+    echo "Optional validation tool missing: iroh (not used by snapshot hashing)"
     offer_iroh_install || true
     return 1
 }
@@ -500,11 +550,13 @@ check_kubo_tooling() {
         return 0
     fi
 
-    echo "Optional compatibility fallback missing: ipfs/Kubo"
+    echo "Optional validation tool missing: ipfs/Kubo (not used by snapshot hashing)"
     offer_kubo_install || true
     return 1
 }
 
+# Disabled Python-based BLAKE3 dependency checker.
+: <<'FOLDERSTAMP_DISABLED_PYTHON_DEPENDENCY'
 check_python_blake3() {
     if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         echo "Optional fallback OK: python3 blake3 module"
@@ -515,6 +567,8 @@ check_python_blake3() {
     echo "Suggested install: python3 -m pip install --user blake3"
     return 1
 }
+FOLDERSTAMP_DISABLED_PYTHON_DEPENDENCY
+
 
 check_dependency() {
     local command_name="$1"
@@ -542,6 +596,8 @@ tool_status() {
     fi
 }
 
+# Disabled Python-based BLAKE3 status helper.
+: <<'FOLDERSTAMP_DISABLED_PYTHON_STATUS'
 python_blake3_status() {
     if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         printf 'python-blake3=available'
@@ -549,6 +605,8 @@ python_blake3_status() {
         printf 'python-blake3=missing'
     fi
 }
+FOLDERSTAMP_DISABLED_PYTHON_STATUS
+
 
 print_dependency_report() {
     # A stamp is an enduring record, not an installer transcript. Keep the
@@ -560,7 +618,7 @@ print_dependency_report() {
         "$(tool_status gix)" \
         "$(tool_status pijul)" \
         "$(tool_status iroh)" \
-        "$(python_blake3_status)" \
+        "$(tool_status b3sum)" \
         "$(tool_status ipfs)"
 }
 
@@ -633,6 +691,10 @@ print_pijul_details() {
     fi
 }
 
+# Python-based CID methods are intentionally disabled for now.
+# Implement the interoperable CIDv1 encoder directly in Bash; see to-do.md.
+# The legacy Iroh blobs-add method is disabled because it stores content locally.
+: <<'FOLDERSTAMP_DISABLED_LEGACY_HASH_METHODS'
 cid_v0_basic_python() {
     local file="$1"
 
@@ -777,6 +839,34 @@ print_cid_hash() {
     fi
 }
 
+FOLDERSTAMP_DISABLED_LEGACY_HASH_METHODS
+
+print_content_hash() {
+    local file="$1"
+    local output hash
+
+    if ! command_exists b3sum; then
+        echo "BLAKE3-256 digest: unavailable (b3sum is not installed)"
+        return 0
+    fi
+
+    # Read via stdin so b3sum streams the file without parsing its filename.
+    if ! output="$(b3sum < "$file")"; then
+        echo "BLAKE3-256 digest: failed (b3sum could not read the file)" >&2
+        return 1
+    fi
+
+    # stdin is represented as "-", so b3sum prints "<digest>  -".
+    hash="${output%%[[:space:]]*}"
+    if [[ ! "$hash" =~ ^[[:xdigit:]]{64}$ ]]; then
+        echo "BLAKE3-256 digest: failed (unexpected b3sum output)" >&2
+        return 1
+    fi
+
+    printf 'BLAKE3-256 digest (Iroh-compatible): %s\n' "$hash"
+    echo "CIDv1/raw/BLAKE3: pending native Bash encoder (see to-do.md)"
+}
+
 stamp_path() {
     local file="$1"
     local target
@@ -799,7 +889,7 @@ stamp_path() {
         fi
         printf 'CID hash: skipped (symbolic link, not file content)\n'
     else
-        print_cid_hash "$file"
+        print_content_hash "$file"
     fi
 
     printf '%s\n' '------------------------------'
@@ -1036,6 +1126,8 @@ resume_folderstamp() {
     local saved_root saved_mode saved_processed saved_bytes root_now actual_bytes
     local final_path
 
+    ensure_b3sum || true
+
     if [[ -z "$incomplete" || ! -f "$incomplete" || -L "$incomplete" ]]; then
         echo "Select an existing regular *.incomplete snapshot file." >&2
         return 1
@@ -1186,6 +1278,7 @@ resume_folderstamp() {
 save_folderstamp() {
     local store_dir work_dir incomplete root mode
 
+    ensure_b3sum || true
     store_dir="$(folderstamp_store_dir)"
     prepare_folderstamp_store || return 1
     command_exists mktemp || {
@@ -1225,6 +1318,8 @@ save_folderstamp() {
 
 display() {
     local mode file
+
+    ensure_b3sum || true
 
     if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
         mode="recursive"
