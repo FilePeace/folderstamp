@@ -756,7 +756,7 @@ next_folderstamp_path() {
     # New rotations are .folderstamp, .folderstamp1, .folderstamp2, ... . Also
     # recognize the old dotted form so an upgrade never overwrites history.
     for path in "$store_dir"/.folderstamp "$store_dir"/.folderstamp[0-9]* "$store_dir"/.folderstamp.[0-9]*; do
-        [[ -e "$path" ]] || continue
+        [[ -e "$path" || -L "$path" ]] || continue
         name="${path##*/}"
         if [[ "$name" == ".folderstamp" ]]; then
             max=0
@@ -819,7 +819,11 @@ folderstamp_is_internal() {
     local basename="${file##*/}"
 
     case "$file" in
-        .git|*/.git|.git/*|*/.git/*|        .pijul|*/.pijul|.pijul/*|*/.pijul/*|        .hg|*/.hg|.hg/*|*/.hg/*|        .svn|*/.svn|.svn/*|*/.svn/*|        .meta/folderstamp|.meta/folderstamp/*|*/.meta/folderstamp|*/.meta/folderstamp/*)
+        .git|*/.git|.git/*|*/.git/*) return 0 ;;
+        .pijul|*/.pijul|.pijul/*|*/.pijul/*) return 0 ;;
+        .hg|*/.hg|.hg/*|*/.hg/*) return 0 ;;
+        .svn|*/.svn|.svn/*|*/.svn/*) return 0 ;;
+        .meta/folderstamp|.meta/folderstamp/*|*/.meta/folderstamp|*/.meta/folderstamp/*)
             return 0 ;;
     esac
 
