@@ -102,7 +102,7 @@ github_os_token() {
     case "$(platform_name)" in
         # Android uses Bionic, not the glibc/musl userspace targeted by generic
         # Linux release assets. Do not guess that a Linux binary is runnable.
-        Termux) echo "" ;;
+        Termux) echo "linux" ;;
         Linux) echo "linux" ;;
         macOS) echo "darwin" ;;
         BSD) echo "freebsd" ;;
@@ -153,8 +153,14 @@ install_release_asset() {
     token="${os_token}-${arch}"
 
     if [[ -z "$os_token" ]]; then
-        echo "Cannot auto-install $label on $(platform_name) yet. Open: https://github.com/$repo/releases/latest"
+        echo "Cannot auto-install $label on $(platform_name). Open: https://github.com/$repo/releases/latest"
         return 1
+    fi
+
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Android/Termux device architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $arch)"
+        echo "The upstream asset is tagged Linux/$arch, not Android/Bionic."
+        echo "Compatibility is not guaranteed; the downloaded binary will be tested before any existing executable is changed."
     fi
 
     if [[ "$release_tag" == "latest" ]]; then
@@ -206,6 +212,27 @@ for asset in data.get("assets", []):
         echo "Downloaded $label, but could not find $bin_name inside the archive."
         echo "Workdir kept for inspection: $workdir"
         return 1
+    fi
+
+    # On Android, never replace a working executable with an incompatible
+    # generic Linux build. A successful version probe is the minimum ABI check.
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        case "$bin_name" in
+            iroh)
+                if ! "$found" --version >/dev/null 2>&1; then
+                    echo "The selected Iroh Linux/$arch asset did not execute on Android/Bionic."
+                    echo "Existing installation was not changed. Archive kept at: $workdir"
+                    return 1
+                fi
+                ;;
+            ipfs)
+                if ! "$found" version >/dev/null 2>&1; then
+                    echo "The selected Kubo Linux/$arch asset did not execute on Android/Bionic."
+                    echo "Existing installation was not changed. Archive kept at: $workdir"
+                    return 1
+                fi
+                ;;
+        esac
     fi
 
     # Stage beside the destination. Preserve an existing executable before
@@ -364,7 +391,11 @@ offer_uutils_stat_install() {
 # Iroh's current releases ship relay/DNS binaries, not the blob CLI. v0.28.1 is
 # the newest release line that ships the standalone `iroh` blob command.
 offer_iroh_install() {
-    if ask_yes_no "Install the Iroh blob CLI from GitHub Releases now?"; then
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Detected Android architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $(normalized_arch))."
+        echo "The available Iroh asset may be a generic Linux build; execution on Android/Bionic is not guaranteed."
+    fi
+    if ask_yes_no "Attempt to download and test the Iroh blob CLI for this architecture?"; then
         install_release_asset "n0-computer/iroh" "Iroh blob CLI" '(^|/)iroh-v.*(tar\.gz|tgz)$' "iroh" "v0.28.1"
     else
         echo "Iroh blob CLI release: https://github.com/n0-computer/iroh/releases/tag/v0.28.1"
@@ -376,7 +407,11 @@ install_kubo_release() {
 }
 
 offer_kubo_install() {
-    if ask_yes_no "Install Kubo/IPFS from GitHub Releases as a compatibility fallback now?"; then
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Detected Android architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $(normalized_arch))."
+        echo "The available Kubo asset may be a generic Linux build; execution on Android/Bionic is not guaranteed."
+    fi
+    if ask_yes_no "Attempt to download and test Kubo/IPFS for this architecture?"; then
         install_kubo_release
     else
         echo "Kubo/IPFS fallback release: https://github.com/ipfs/kubo/releases/latest"
