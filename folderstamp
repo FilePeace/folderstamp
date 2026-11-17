@@ -744,18 +744,29 @@ print_cid_hash() {
 
 stamp_path() {
     local file="$1"
+    local target
 
-    # Stream output directly; do not buffer whole metadata or rewrite percent signs.
     printf '\n'
-    if command_exists stat; then
-        if ! stat "$file" 2>/dev/null; then
-            printf 'stat failed for: %s\n' "$file"
-        fi
-    else
-        printf 'stat unavailable for: %s\n' "$file"
-        printf 'Suggested install: %s\n' "$(install_command_for coreutils)"
+    if ! command_exists stat || ! stat "$file" 2>/dev/null; then
+        printf 'stat failed for: %s\n' "$file"
+        return 1
     fi
-    print_cid_hash "$file"
+
+    if [[ -L "$file" ]]; then
+        if command_exists readlink; then
+            target="$(readlink "$file" 2>/dev/null)" || {
+                printf 'Symlink target: unavailable\n'
+                return 1
+            }
+            printf 'Symlink target: %s\n' "$target"
+        else
+            printf 'Symlink target: unavailable (readlink missing)\n'
+        fi
+        printf 'CID hash: skipped (symbolic link, not file content)\n'
+    else
+        print_cid_hash "$file"
+    fi
+
     printf '%s\n' '------------------------------'
 }
 
@@ -896,12 +907,249 @@ folderstamp_is_ignored() {
 }
 
 should_stamp_path() {
-    # Treat symlinks consistently in recursive and non-recursive mode.
-    [[ -f "$1" && ! -L "$1" ]] && ! folderstamp_is_ignored "$1"
+    # Include links as directory entries, including broken links, without following them.
+    { [[ -f "$1" ]] || [[ -L "$1" ]]; } && ! folderstamp_is_ignored "$1"
+}
+
+print_snapshot_header() {
+    local mode="$1"
+
+    echo "This folder: $(pwd)"
+    echo "Platform: $(platform_name)"
+    print_storage_details
+    echo "folderstamp version: $FOLDERSTAMP_VERSION"
+    if [[ "$mode" == "recursive" ]]; then
+        echo "Method: Recursive"
+    else
+        echo "Method: Non-recursive"
+    fi
+    print_dependency_report
+    print_git_details
+    print_pijul_details
+}
+
+build_snapshot_file_list() {
+    local mode="$1"
+    local list_file="$2"
+    local work_dir="$3"
+    local candidates="$work_dir/candidates"
+    local list_tmp="$list_file.tmp"
+    local file
+
+    : > "$list_tmp"
+
+    if [[ "$mode" == "recursive" ]]; then
+        if ! find . \\( -type d \\( \\
+            -name .git -o -name .pijul -o -name .hg -o -name .svn -o \\
+            -path './.meta/folderstamp' \\
+        \\) -prune \\) -o \\( \\( -type f -o -type l \\) -print0 \\) > "$candidates"; then
+            echo "Could not enumerate files for the snapshot." >&2
+            return 1
+        fi
+
+        while IFS= read -r -d '' file; do
+            if should_stamp_path "$file"; then
+                printf '%s\\0' "$file" >> "$list_tmp" || return 1
+            fi
+        done < "$candidates"
+    else
+        shopt -s dotglob nullglob
+        for file in ./*; do
+            if should_stamp_path "$file"; then
+                printf '%s\\0' "$file" >> "$list_tmp" || return 1
+            fi
+        done
+    fi
+
+    mv "$list_tmp" "$list_file" || return 1
+    rm -f "$candidates"
+}
+
+write_snapshot_checkpoint() {
+    local checkpoint="$1"
+    local root="$2"
+    local mode="$3"
+    local processed="$4"
+    local safe_bytes="$5"
+    local checkpoint_tmp
+
+    command_exists sync || {
+        echo "Cannot guarantee resumable snapshots: sync is missing." >&2
+        return 1
+    }
+    checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
+
+    if ! printf '%s\\0%s\\0%s\\0%s\\0' \\
+        "$root" "$mode" "$processed" "$safe_bytes" > "$checkpoint_tmp"; then
+        rm -f "$checkpoint_tmp"
+        return 1
+    fi
+
+    # The manifest is synced before advancing the checkpoint. After a crash,
+    # the checkpoint therefore never intentionally points past durable output.
+    sync || return 1
+    if ! mv -f "$checkpoint_tmp" "$checkpoint"; then
+        rm -f "$checkpoint_tmp"
+        return 1
+    fi
+    sync
+}
+
+resume_folderstamp() {
+    local incomplete="$1"
+    local work_dir store_dir expected_store work_real checkpoint list_file entry_file
+    local saved_root saved_mode saved_processed saved_bytes root_now actual_bytes
+    local final_path
+
+    if [[ -z "$incomplete" || ! -f "$incomplete" || -L "$incomplete" ]]; then
+        echo "Select an existing regular *.incomplete snapshot file." >&2
+        return 1
+    fi
+    if [[ "${incomplete##*/}" != "folderstamp.incomplete" ]]; then
+        echo "The selected file must be named folderstamp.incomplete." >&2
+        return 1
+    fi
+
+    work_dir="$(dirname "$incomplete")"
+    store_dir="$(folderstamp_store_dir)"
+    if [[ ! -d "$work_dir" || -L "$work_dir" || ! -d "$store_dir" ]]; then
+        echo "Incomplete snapshot workspace is missing or unsafe." >&2
+        return 1
+    fi
+
+    expected_store="$(cd "$store_dir" && pwd -P)" || return 1
+    work_real="$(cd "$work_dir" && pwd -P)" || return 1
+    case "$work_real" in
+        "$expected_store"/.folderstamp.incomplete.*) ;;
+        *)
+            echo "The selected incomplete file is not in this folder's Folderstamp workspace." >&2
+            return 1 ;;
+    esac
+
+    checkpoint="$work_dir/checkpoint"
+    list_file="$work_dir/files.list"
+    entry_file="$work_dir/current-entry"
+
+    if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
+        echo "Checkpoint data is missing or unsafe; the incomplete file was preserved." >&2
+        return 1
+    fi
+
+    # The NUL-delimited fields keep unusual directory names safe.
+    exec 9< "$checkpoint"
+    IFS= read -r -d '' saved_root <&9 || { exec 9<&-; echo "Invalid checkpoint root." >&2; return 1; }
+    IFS= read -r -d '' saved_mode <&9 || { exec 9<&-; echo "Invalid checkpoint mode." >&2; return 1; }
+    IFS= read -r -d '' saved_processed <&9 || { exec 9<&-; echo "Invalid checkpoint count." >&2; return 1; }
+    IFS= read -r -d '' saved_bytes <&9 || { exec 9<&-; echo "Invalid checkpoint size." >&2; return 1; }
+    exec 9<&-
+
+    if [[ ! "$saved_processed" =~ ^[0-9]+$ || ! "$saved_bytes" =~ ^[0-9]+$ ]]; then
+        echo "Checkpoint counters are invalid; the incomplete file was preserved." >&2
+        return 1
+    fi
+    if [[ "$saved_mode" != "recursive" && "$saved_mode" != "non-recursive" ]]; then
+        echo "Checkpoint mode is invalid." >&2
+        return 1
+    fi
+
+    root_now="$(pwd -P)"
+    if [[ "$saved_root" != "$root_now" ]]; then
+        echo "Resume from the original directory: $saved_root" >&2
+        return 1
+    fi
+
+    # If power failed before the initial list was committed, safely rebuild it.
+    if [[ ! -f "$list_file" || -L "$list_file" ]]; then
+        if (( saved_processed != 0 )); then
+            echo "The file list is missing; refusing to guess which files were completed." >&2
+            return 1
+        fi
+        rm -f "$list_file.tmp" "$work_dir/candidates"
+        if ! build_snapshot_file_list "$saved_mode" "$list_file" "$work_dir"; then
+            echo "Could not rebuild the file list. Incomplete data remains at: $incomplete" >&2
+            return 1
+        fi
+    fi
+
+    actual_bytes=$(( $(wc -c < "$incomplete") ))
+    if (( actual_bytes < saved_bytes )); then
+        echo "The incomplete file is shorter than its last durable checkpoint; refusing to discard or guess data." >&2
+        return 1
+    fi
+    if (( actual_bytes > saved_bytes )); then
+        command_exists truncate || {
+            echo "Resume needs the truncate command; install coreutils and try again." >&2
+            return 1
+        }
+        truncate -s "$saved_bytes" "$incomplete" || return 1
+        sync || return 1
+    fi
+
+    # A zero-byte checkpoint means the header had not been committed yet.
+    if (( saved_bytes == 0 )); then
+        if ! print_snapshot_header "$saved_mode" > "$incomplete"; then
+            echo "Could not write the snapshot header." >&2
+            return 1
+        fi
+        sync || return 1
+        saved_bytes=$(( $(wc -c < "$incomplete") ))
+        write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$saved_processed" "$saved_bytes" || return 1
+    fi
+
+    echo "Resuming incomplete snapshot: $incomplete"
+    local processed=0 file next_bytes
+    while IFS= read -r -d '' file; do
+        processed=$((processed + 1))
+        if (( processed <= saved_processed )); then
+            continue
+        fi
+
+        if [[ ! -f "$file" && ! -L "$file" ]]; then
+            printf '\nFile no longer exists; omitted from this snapshot: %q\n------------------------------\n' "$file" > "$entry_file"
+        elif ! stamp_path "$file" > "$entry_file"; then
+            echo "Could not stamp: $file" >&2
+            echo "Incomplete work preserved at: $incomplete" >&2
+            return 1
+        fi
+
+        if ! cat "$entry_file" >> "$incomplete"; then
+            echo "Could not append the current entry; incomplete work preserved at: $incomplete" >&2
+            return 1
+        fi
+        sync || {
+            echo "Could not sync snapshot data; resume file preserved at: $incomplete" >&2
+            return 1
+        }
+        next_bytes=$(( $(wc -c < "$incomplete") ))
+        if ! write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$processed" "$next_bytes"; then
+            echo "Could not advance the checkpoint; resume file preserved at: $incomplete" >&2
+            return 1
+        fi
+    done < "$list_file"
+
+    # Publish only a complete manifest. mv -n plus the post-check avoids
+    # replacing a rotation created by another concurrent save.
+    while :; do
+        final_path="$(next_folderstamp_path "$store_dir")"
+        if [[ -e "$final_path" || -L "$final_path" ]]; then
+            continue
+        fi
+        if mv -n "$incomplete" "$final_path" && [[ ! -e "$incomplete" ]]; then
+            break
+        fi
+        if [[ ! -e "$incomplete" ]]; then
+            echo "Snapshot may have been published, but its final path could not be confirmed." >&2
+            return 1
+        fi
+    done
+
+    rm -f "$checkpoint" "$list_file" "$entry_file" "$list_file.tmp" "$work_dir/candidates"
+    rmdir "$work_dir" 2>/dev/null || true
+    echo "Saved completed folderstamp: $final_path"
 }
 
 save_folderstamp() {
-    local store_dir temp_path output_path
+    local store_dir work_dir incomplete root mode
 
     store_dir="$(folderstamp_store_dir)"
     prepare_folderstamp_store || return 1
@@ -909,64 +1157,60 @@ save_folderstamp() {
         echo "Cannot save safely: mktemp is missing." >&2
         return 1
     }
+    command_exists sync || {
+        echo "Cannot create a resumable snapshot safely: sync is missing." >&2
+        return 1
+    }
 
-    # Build in a unique temporary file; publish only a completed snapshot.
-    temp_path="$(mktemp "$store_dir/.folderstamp.tmp.XXXXXX")" || return 1
-    echo "🤓📝 Working..."
-    if ! display "$1" "$2" > "$temp_path"; then
-        rm -f "$temp_path"
-        echo "Stamp generation failed; no partial snapshot was published." >&2
+    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+        mode="recursive"
+    else
+        mode="non-recursive"
+    fi
+
+    work_dir="$(mktemp -d "$store_dir/.folderstamp.incomplete.XXXXXX")" || return 1
+    incomplete="$work_dir/folderstamp.incomplete"
+    root="$(pwd -P)"
+
+    # The .incomplete extension is present from the beginning. A power loss
+    # therefore leaves a clearly named recovery candidate, not an anonymous tmp.
+    : > "$incomplete"
+    if ! write_snapshot_checkpoint "$work_dir/checkpoint" "$root" "$mode" 0 0; then
+        echo "Incomplete workspace preserved at: $incomplete" >&2
         return 1
     fi
 
-    while :; do
-        output_path="$(next_folderstamp_path "$store_dir")"
-        if [[ -e "$output_path" || -L "$output_path" ]]; then
-            continue
-        fi
-        if mv -n "$temp_path" "$output_path" && [[ ! -e "$temp_path" ]]; then
-            break
-        fi
-        if [[ ! -e "$temp_path" ]]; then
-            echo "Could not safely publish the completed snapshot." >&2
-            return 1
-        fi
-    done
-    echo "Saved folderstamp: $output_path"
+    if ! build_snapshot_file_list "$mode" "$work_dir/files.list" "$work_dir"; then
+        echo "Could not prepare the file list. Incomplete workspace preserved at: $incomplete" >&2
+        return 1
+    fi
+
+    resume_folderstamp "$incomplete"
 }
 
 display() {
-    local rocketlaunch_dir method file
-
-    rocketlaunch_dir="$(pwd)"
-    echo "This folder: $rocketlaunch_dir"
-    echo "Platform: $(platform_name)"
-    print_storage_details
-    echo "folderstamp version: $FOLDERSTAMP_VERSION"
+    local mode file
 
     if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
-        method="Recursive"
+        mode="recursive"
     else
-        method="Non-recursive"
+        mode="non-recursive"
     fi
-    echo "Method: $method"
-    print_dependency_report
-    print_git_details
-    print_pijul_details
 
-    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+    print_snapshot_header "$mode"
+
+    if [[ "$mode" == "recursive" ]]; then
         command_exists find || {
             echo "Cannot use recursive mode: find is missing." >&2
             return 1
         }
-        find . \( -type d \( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path '*/.meta/folderstamp' \) -prune \) -o -type f -print0 |
+        find . \\( -type d \\( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path './.meta/folderstamp' \\) -prune \\) -o \\( \\( -type f -o -type l \\) -print0 \\) |
         while IFS= read -r -d '' file; do
             if should_stamp_path "$file"; then
                 stamp_path "$file" || return 1
             fi
         done
     else
-        # Include dotfiles; nullglob makes an empty directory safe.
         shopt -s dotglob nullglob
         for file in ./*; do
             if should_stamp_path "$file"; then
@@ -978,20 +1222,25 @@ display() {
 
 print_help() {
     cat <<'HELP'
-Usage: folderstamp <display|save> [--recursive|-r]
+Usage:
+  folderstamp display [--recursive|-r]
+  folderstamp save [--recursive|-r]
+  folderstamp resume PATH_TO_FOLDERSTAMP_INCOMPLETE
+  folderstamp --help
 
 Commands:
-  display              Print a stamp for regular files in the current directory.
-  save                 Save a stamp under .meta/folderstamp/.
+  display              Print a snapshot to standard output.
+  save                 Create a resumable snapshot under .meta/folderstamp/.
+  resume PATH          Continue a selected folderstamp.incomplete file.
 
-Options:
-  --recursive, -r      Include files below the current directory.
-  --help, -h           Show this help.
+Hidden files are included. Symbolic links are recorded as links and never
+followed or hashed. VCS databases (.git, .pijul, .hg and .svn), the internal
+stamp store, and legacy .folderstamp* files are excluded. .folderstampignore
+supports a limited gitignore-like syntax, not the complete Git ignore engine.
 
-Hidden files are included. Symbolic links are skipped. VCS databases
-(.git, .pijul, .hg and .svn), the internal stamp store, and .folderstamp*
-files are excluded. .folderstampignore supports a limited gitignore-like
-pattern syntax, not every Git ignore edge case.
+Incomplete snapshots keep their .incomplete extension and a private checkpoint.
+Resume from the same original directory and do not modify the file tree while
+resuming; the saved file list preserves the original traversal order.
 HELP
 }
 
@@ -999,6 +1248,13 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
    print_help
 elif [[ "${1:-}" == "save" ]]; then
    save_folderstamp "$1" "${2:-}"
+elif [[ "${1:-}" == "resume" ]]; then
+   if [[ -z "${2:-}" ]]; then
+       echo "resume requires the path to a folderstamp.incomplete file." >&2
+       print_help >&2
+       exit 2
+   fi
+   resume_folderstamp "$2"
 elif [[ "${1:-}" == "display" ]]; then
    display "$1" "${2:-}"
 else
