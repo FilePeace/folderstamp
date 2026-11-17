@@ -13,7 +13,9 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Corrigida a exclusão de arquivos internos e bancos Git, Pijul, Mercurial e Subversion em caminhos aninhados.
 - Links simbólicos agora são registrados com metadados `stat` e destino `readlink`, sem seguir o destino nem calcular hash do conteúdo.
 - Corrigida a saída de metadados, removendo a duplicação de sinais de porcentagem e evitando armazenar a saída inteira em uma variável.
-- Tornado o fallback CIDv0 single-block e o fallback CIDv1/BLAKE3 incrementais, evitando carregar arquivos inteiros na memória.
+- Tornado `b3sum` o mecanismo prioritário e único de digest BLAKE3-256, lendo arquivos via stdin em streaming.
+- Desativados os métodos Python de CIDv0/CIDv1 enquanto a implementação nativa Bash de CIDv1 é preparada.
+- Removida do fluxo de hash a chamada `iroh blobs add`, que podia persistir o conteúdo no armazenamento local do Iroh.
 - Tornados os diagnósticos de armazenamento tolerantes a falhas de `df` e `lsblk`.
 - Redigidas credenciais embutidas em URLs de remotes Git antes de incluí-las em snapshots.
 
@@ -22,10 +24,10 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - O progresso só avança depois que os dados do snapshot e o checkpoint são sincronizados; falhas deixam o arquivo incompleto disponível para retomada.
 - Adicionado `folderstamp resume PATH`, que retoma a partir do último checkpoint durável e não publica um snapshot final até concluir.
 - O instalador preserva a instalação anterior em um arquivo de backup antes de publicar uma nova versão.
-- Iroh/Kubo continuam oferecidos no Termux somente após confirmação explícita, com arquitetura do dispositivo exibida e teste do binário antes de substituir uma instalação existente.
+- Iroh e Kubo permanecem ferramentas opcionais de validação, mas não são chamados pelo fluxo de snapshot nem recebem conteúdo para armazenamento.
 
 ### Documentation
-- README atualizado com links simbólicos, recuperação de snapshots interrompidos, requisitos de Termux e limitações de compatibilidade Android/Bionic.
+- README atualizado com links simbólicos, recuperação de snapshots interrompidos, instalação automática de `b3sum` via `apt`/`pkg`, digest BLAKE3 em streaming e a pendência do encoder CIDv1 nativo em Bash.
 - To-do atualizado com testes de nomes complexos, gitignore, CIDv0 single-block, verificação criptográfica de downloads e suporte futuro a cartão SD no Termux (PR 2/2).
 
 
