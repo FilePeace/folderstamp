@@ -939,24 +939,24 @@ build_snapshot_file_list() {
     : > "$list_tmp"
 
     if [[ "$mode" == "recursive" ]]; then
-        if ! find . \\( -type d \\( \\
-            -name .git -o -name .pijul -o -name .hg -o -name .svn -o \\
-            -path './.meta/folderstamp' \\
-        \\) -prune \\) -o \\( \\( -type f -o -type l \\) -print0 \\) > "$candidates"; then
+        if ! find . \( -type d \( \
+            -name .git -o -name .pijul -o -name .hg -o -name .svn -o \
+            -path './.meta/folderstamp' \
+        \) -prune \) -o \( \( -type f -o -type l \) -print0 \) > "$candidates"; then
             echo "Could not enumerate files for the snapshot." >&2
             return 1
         fi
 
         while IFS= read -r -d '' file; do
             if should_stamp_path "$file"; then
-                printf '%s\\0' "$file" >> "$list_tmp" || return 1
+                printf '%s\0' "$file" >> "$list_tmp" || return 1
             fi
         done < "$candidates"
     else
         shopt -s dotglob nullglob
         for file in ./*; do
             if should_stamp_path "$file"; then
-                printf '%s\\0' "$file" >> "$list_tmp" || return 1
+                printf '%s\0' "$file" >> "$list_tmp" || return 1
             fi
         done
     fi
@@ -979,7 +979,7 @@ write_snapshot_checkpoint() {
     }
     checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
 
-    if ! printf '%s\\0%s\\0%s\\0%s\\0' \\
+    if ! printf '%s\0%s\0%s\0%s\0' \
         "$root" "$mode" "$processed" "$safe_bytes" > "$checkpoint_tmp"; then
         rm -f "$checkpoint_tmp"
         return 1
@@ -1204,7 +1204,7 @@ display() {
             echo "Cannot use recursive mode: find is missing." >&2
             return 1
         }
-        find . \\( -type d \\( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path './.meta/folderstamp' \\) -prune \\) -o \\( \\( -type f -o -type l \\) -print0 \\) |
+        find . \( -type d \( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path './.meta/folderstamp' \) -prune \) -o \( \( -type f -o -type l \) -print0 \) |
         while IFS= read -r -d '' file; do
             if should_stamp_path "$file"; then
                 stamp_path "$file" || return 1
