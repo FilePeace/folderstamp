@@ -100,7 +100,10 @@ normalized_arch() {
 
 github_os_token() {
     case "$(platform_name)" in
-        Linux|Termux) echo "linux" ;;
+        # Android uses Bionic, not the glibc/musl userspace targeted by generic
+        # Linux release assets. Do not guess that a Linux binary is runnable.
+        Termux) echo "" ;;
+        Linux) echo "linux" ;;
         macOS) echo "darwin" ;;
         BSD) echo "freebsd" ;;
         Cygwin) echo "windows" ;;
