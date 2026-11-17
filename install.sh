@@ -8,8 +8,9 @@ command_exists() {
 install_dir() {
     uname_s="$(uname -s 2>/dev/null || echo unknown)"
     uname_o="$(uname -o 2>/dev/null || echo unknown)"
+    prefix_value="${PREFIX:-}"
 
-    if [ -n "${TERMUX_VERSION:-}" ] || [ "${PREFIX:-}" != "${PREFIX#*com.termux}" ] || [ "$uname_o" = "Android" ]; then
+    if [ -n "${TERMUX_VERSION:-}" ] || [ "$prefix_value" != "${prefix_value#*com.termux}" ] || [ "$uname_o" = "Android" ]; then
         if [ -n "${PREFIX:-}" ]; then
             printf '%s/bin\n' "$PREFIX"
         else
