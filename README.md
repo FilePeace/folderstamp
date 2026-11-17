@@ -1,6 +1,6 @@
 # Folderstamp
 
-Folderstamp creates a human-readable snapshot of regular files in the current directory. It records filesystem metadata and, when an available provider supports it, a content identifier (CID).
+Folderstamp creates a human-readable snapshot of regular files in the current directory. It records filesystem metadata and a streaming BLAKE3-256 content digest; CIDv1/raw encoding is tracked for a native Bash implementation.
 
 ## Requirements
 
