@@ -4,12 +4,8 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 
 ## Próximas prioridades
 
-- [ ] Adicionar flag `--help` com exemplos de uso para `display`, `save`, `--recursive` e futuras opções.
-- [ ] Implementar flag `--hash` para controlar quando o CID/IPFS hash deve ser calculado.
-- [ ] Criar rotação automática de `.folderstamp`, gerando `.folderstamp1`, `.folderstamp2` etc. quando o arquivo já existir.
-- [ ] Adicionar suporte a `.folderstampignore`, seguindo uma lógica parecida com `.gitignore`.
-- [ ] Ignorar itens internos por padrão, como `.git/` e o próprio `.folderstamp`, especialmente no modo recursivo.
-- [ ] Registrar a data/hora exata no fim de cada `.folderstamp`.
+- [ ] Implementar flag `--hash` para controlar quando o CID deve ser calculado.
+- [ ] Registrar a data/hora exata no fim de cada snapshot.
 - [ ] Adicionar opção para registrar o número do bloco Ethereum mais recente no momento do stamp.
 
 ## Modos de listagem
@@ -34,21 +30,17 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 - [ ] Adicionar opção para limitar profundidade de recursão.
 - [ ] Adicionar opção para escolher um número customizado para `.folderstamp`, recusando números já existentes.
 
-## Portabilidade e dependências
+## Portabilidade, integridade e testes
 
-- [ ] Evoluir o fallback `CIDv0 basic` para suportar chunking, diretórios e CIDv1/raw leaves; validar os CIDs BLAKE3 contra ferramentas do ecossistema Iroh.
+- [ ] Validar a execução em Termux real (Android/Bionic), incluindo execução por shell interativo e não interativo.
+- [ ] Testar o instalador em Termux com e sem uma instalação anterior.
+- [ ] Adicionar testes automatizados para nomes com espaços, tabs, quebras de linha, Unicode e diretórios vazios.
+- [ ] Testar concorrência entre duas chamadas simultâneas de `save`.
+- [ ] Verificar comportamento em sistemas de arquivos sem suporte confiável a renomeação atômica.
+- [ ] Validar o fallback CIDv0 contra Kubo em arquivos vazios, pequenos e acima do limite de chunking.
+- [ ] Testar assets e instalação de ferramentas externas por arquitetura e libc antes de habilitar autodownload em cada plataforma.
 - [ ] Migrar do CLI Iroh legado v0.28.1 para uma interface atual de Iroh assim que Releases oficiais voltarem a publicar um CLI de blobs.
 - [ ] Expandir a detecção de package managers além de `apt`, `dnf`, `pacman`, `apk`, `zypper`, `pkg` e Cygwin setup.
-- [ ] Criar instalador assistido opcional para Kubo/IPFS com seleção automática de arquitetura.
-- [ ] Adicionar checks para dependências opcionais como `df`, `awk`, `sed`, `find`, `tar` e `curl`.
-- [ ] Documentar diferenças entre GNU/Linux, Termux, Cygwin e RedoxOS.
-
-## Documentação
-
-- [ ] Criar `README.md` com instalação, uso, exemplos e troubleshooting.
-- [ ] Documentar as limitações do hash IPFS quando o daemon não está rodando.
-- [ ] Adicionar exemplos de saída para modo recursivo e não-recursivo.
-- [ ] Explicar como auditar um `.folderstamp` salvo.
 
 ## Controle de versão alternativo
 
@@ -56,9 +48,14 @@ Uma lista organizada dos próximos feitiços técnicos do `folderstamp`.
 - [ ] Expandir suporte Pijul para registrar remotes, identidade do repositório e mudanças pendentes.
 - [ ] Adicionar testes simulando ambientes com apenas `git`, apenas `gix`, apenas `pijul` e nenhum VCS instalado.
 
-
 ## Plataformas adicionais
 
 - [ ] Testar o instalador em macOS real com e sem Homebrew.
 - [ ] Testar comandos BSD com `pkg` e `pkg_add` em shells não-GNU.
 - [ ] Documentar o que é possível automatizar em Zircon/Fuchsia sem fingir universalidade fake.
+
+## Documentação
+
+- [x] Criar `README.md` com instalação, uso, exemplos e troubleshooting.
+- [x] Documentar diferenças e limitações conhecidas de Termux, especialmente a incompatibilidade presumida de binários Linux/glibc com Android/Bionic.
+- [x] Documentar as limitações do fallback CIDv0 single-block e do matcher `.folderstampignore`.
