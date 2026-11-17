@@ -5,6 +5,94 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+
+is_termux() {
+    # Prefer Termux-provided environment markers so detection does not depend
+    # on GNU coreutils being installed already.
+    [ -n "${TERMUX_VERSION:-}" ] && return 0
+
+    case "${PREFIX:-}" in
+        *com.termux*) return 0 ;;
+    esac
+
+    [ -n "${TERMUX_APP__PACKAGE:-}" ] && return 0
+
+    if command_exists uname; then
+        uname_o="$(uname -o 2>/dev/null || echo unknown)"
+        [ "$uname_o" = "Android" ] && return 0
+    fi
+
+    return 1
+}
+
+termux_command_exists() {
+    # Do not mistake Android's /system/bin utilities for the Termux packages:
+    # Folderstamp expects the Termux-provided Bash/coreutils/findutils tools.
+    command_path="$(command -v "$1" 2>/dev/null || true)"
+    case "$command_path" in
+        "$PREFIX"/bin/*) return 0 ;;
+    esac
+    return 1
+}
+
+ensure_termux_dependencies() {
+    if [ -z "${PREFIX:-}" ]; then
+        echo "Termux was detected, but PREFIX is not set. Start this installer inside Termux." >&2
+        return 1
+    fi
+
+    packages_to_install=""
+
+    if ! termux_command_exists bash; then
+        packages_to_install="$packages_to_install bash"
+    fi
+
+    # These representative commands are supplied by Termux's coreutils
+    # package and cover both installer operations and Folderstamp's runtime.
+    for utility in stat dirname mktemp; do
+        if ! termux_command_exists "$utility"; then
+            packages_to_install="$packages_to_install coreutils"
+            break
+        fi
+    done
+
+    if ! termux_command_exists find; then
+        packages_to_install="$packages_to_install findutils"
+    fi
+
+    if [ -z "$packages_to_install" ]; then
+        echo "Termux dependencies already available (bash, coreutils, findutils)."
+        return 0
+    fi
+
+    if ! command_exists pkg; then
+        echo "Termux was detected, but the 'pkg' package manager is unavailable." >&2
+        echo "Install/repair Termux's package manager, then run this installer again." >&2
+        return 1
+    fi
+
+    echo "Termux detected. Installing missing dependencies:$packages_to_install"
+    if ! pkg update; then
+        echo "Termux package index update failed; no existing Folderstamp installation was changed." >&2
+        return 1
+    fi
+
+    # This list contains only fixed package names assembled above.
+    # shellcheck disable=SC2086
+    set -- $packages_to_install
+    if ! pkg install -y "$@"; then
+        echo "Could not install the required Termux packages; no existing Folderstamp installation was changed." >&2
+        return 1
+    fi
+
+    for utility in bash stat dirname mktemp find; do
+        if ! termux_command_exists "$utility"; then
+            echo "Required Termux command is still unavailable after package installation: $utility" >&2
+            return 1
+        fi
+    done
+}
+
 install_dir() {
     uname_s="$(uname -s 2>/dev/null || echo unknown)"
     uname_o="$(uname -o 2>/dev/null || echo unknown)"
@@ -75,6 +163,10 @@ install_staged() {
         echo "Previous executable preserved at: $backup"
     fi
 }
+
+if is_termux; then
+    ensure_termux_dependencies
+fi
 
 DEST_DIR="$(install_dir)"
 DEST="$DEST_DIR/folderstamp"
