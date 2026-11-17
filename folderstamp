@@ -1,6 +1,7 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-FOLDERSTAMP_VERSION="r6"
+FOLDERSTAMP_VERSION="r6.1"
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -99,7 +100,10 @@ normalized_arch() {
 
 github_os_token() {
     case "$(platform_name)" in
-        Linux|Termux) echo "linux" ;;
+        # Android uses Bionic, not the glibc/musl userspace targeted by generic
+        # Linux release assets. Do not guess that a Linux binary is runnable.
+        Termux) echo "linux" ;;
+        Linux) echo "linux" ;;
         macOS) echo "darwin" ;;
         BSD) echo "freebsd" ;;
         Cygwin) echo "windows" ;;
@@ -149,8 +153,14 @@ install_release_asset() {
     token="${os_token}-${arch}"
 
     if [[ -z "$os_token" ]]; then
-        echo "Cannot auto-install $label on $(platform_name) yet. Open: https://github.com/$repo/releases/latest"
+        echo "Cannot auto-install $label on $(platform_name). Open: https://github.com/$repo/releases/latest"
         return 1
+    fi
+
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Android/Termux device architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $arch)"
+        echo "The upstream asset is tagged Linux/$arch, not Android/Bionic."
+        echo "Compatibility is not guaranteed; the downloaded binary will be tested before any existing executable is changed."
     fi
 
     if [[ "$release_tag" == "latest" ]]; then
@@ -204,9 +214,61 @@ for asset in data.get("assets", []):
         return 1
     fi
 
-    cp "$found" "$dest"
-    chmod +x "$dest"
+    # On Android, never replace a working executable with an incompatible
+    # generic Linux build. A successful version probe is the minimum ABI check.
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        case "$bin_name" in
+            iroh)
+                if ! "$found" --version >/dev/null 2>&1; then
+                    echo "The selected Iroh Linux/$arch asset did not execute on Android/Bionic."
+                    echo "Existing installation was not changed. Archive kept at: $workdir"
+                    return 1
+                fi
+                ;;
+            ipfs)
+                if ! "$found" version >/dev/null 2>&1; then
+                    echo "The selected Kubo Linux/$arch asset did not execute on Android/Bionic."
+                    echo "Existing installation was not changed. Archive kept at: $workdir"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
+
+    # Stage beside the destination. Preserve an existing executable before
+    # publishing a replacement, rather than truncating it in place.
+    local dest_dir stage backup
+    dest_dir="$(dirname "$dest")"
+    mkdir -p "$dest_dir"
+    stage="$(mktemp "$dest_dir/.folderstamp.asset.XXXXXX")" || return 1
+    if ! cp "$found" "$stage" || ! chmod +x "$stage"; then
+        rm -f "$stage"
+        echo "Could not stage $label; existing installation was not changed." >&2
+        return 1
+    fi
+
+    backup=""
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        backup="$dest.backup.$(date +%Y%m%d%H%M%S 2>/dev/null || echo unknown)"
+        if [[ -e "$backup" || -L "$backup" ]] || ! mv "$dest" "$backup"; then
+            rm -f "$stage"
+            echo "Could not preserve existing $dest; installation aborted." >&2
+            return 1
+        fi
+    fi
+
+    if ! mv "$stage" "$dest"; then
+        if [[ -n "$backup" && ! -e "$dest" ]]; then
+            mv "$backup" "$dest" || echo "WARNING: restore manually from $backup" >&2
+        fi
+        rm -f "$stage"
+        echo "Could not publish $label." >&2
+        return 1
+    fi
+
+    rm -rf "$workdir"
     echo "$label installed at $dest"
+    [[ -z "$backup" ]] || echo "Previous executable preserved at: $backup"
 }
 
 ask_yes_no() {
@@ -217,11 +279,11 @@ ask_yes_no() {
         return 1
     fi
 
-    printf "%s [Y/n] " "$question"
+    printf "%s [y/N] " "$question"
     read -r answer
     case "$answer" in
-        n|N|no|NO|No) return 1 ;;
-        *) return 0 ;;
+        y|Y|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
@@ -329,7 +391,11 @@ offer_uutils_stat_install() {
 # Iroh's current releases ship relay/DNS binaries, not the blob CLI. v0.28.1 is
 # the newest release line that ships the standalone `iroh` blob command.
 offer_iroh_install() {
-    if ask_yes_no "Install the Iroh blob CLI from GitHub Releases now?"; then
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Detected Android architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $(normalized_arch))."
+        echo "The available Iroh asset may be a generic Linux build; execution on Android/Bionic is not guaranteed."
+    fi
+    if ask_yes_no "Attempt to download and test the Iroh blob CLI for this architecture?"; then
         install_release_asset "n0-computer/iroh" "Iroh blob CLI" '(^|/)iroh-v.*(tar\.gz|tgz)$' "iroh" "v0.28.1"
     else
         echo "Iroh blob CLI release: https://github.com/n0-computer/iroh/releases/tag/v0.28.1"
@@ -341,7 +407,11 @@ install_kubo_release() {
 }
 
 offer_kubo_install() {
-    if ask_yes_no "Install Kubo/IPFS from GitHub Releases as a compatibility fallback now?"; then
+    if [[ "$(platform_name)" == "Termux" ]]; then
+        echo "Detected Android architecture: $(uname -m 2>/dev/null || echo unknown) (normalized: $(normalized_arch))."
+        echo "The available Kubo asset may be a generic Linux build; execution on Android/Bionic is not guaranteed."
+    fi
+    if ask_yes_no "Attempt to download and test Kubo/IPFS for this architecture?"; then
         install_kubo_release
     else
         echo "Kubo/IPFS fallback release: https://github.com/ipfs/kubo/releases/latest"
@@ -376,6 +446,56 @@ check_git_tooling() {
     echo "Suggested Git install: $(install_command_for git)"
     offer_gitoxide_install || true
     return 1
+}
+
+install_b3sum_package() {
+    local platform
+    platform="$(platform_name)"
+
+    case "$platform" in
+        Termux)
+            if ! command_exists pkg; then
+                echo "Termux package manager 'pkg' is unavailable." >&2
+                return 1
+            fi
+            echo "Installing b3sum from the Termux package repository..."
+            pkg install -y b3sum
+            ;;
+        Linux)
+            if command_exists apt-get; then
+                echo "Installing b3sum from the Debian/Ubuntu package repository..."
+                run_privileged apt-get update && run_privileged apt-get install -y b3sum
+            else
+                echo "Automatic b3sum installation is currently configured only for Debian/Ubuntu (apt) and Termux (pkg)." >&2
+                echo "Install b3sum with your distribution package manager and run Folderstamp again." >&2
+                return 1
+            fi
+            ;;
+        *)
+            echo "Automatic b3sum installation is not configured for $(platform_name)." >&2
+            echo "Install b3sum manually, then run Folderstamp again." >&2
+            return 1
+            ;;
+    esac
+}
+
+ensure_b3sum() {
+    if command_exists b3sum; then
+        return 0
+    fi
+
+    echo "b3sum is missing; attempting package installation..."
+    if ! install_b3sum_package; then
+        echo "Could not install b3sum automatically. Snapshot metadata can still be generated, but no BLAKE3 digest will be recorded." >&2
+        return 1
+    fi
+
+    if ! command_exists b3sum; then
+        echo "Package installation returned, but b3sum is still unavailable in PATH." >&2
+        return 1
+    fi
+
+    echo "b3sum is ready: $(command -v b3sum)"
 }
 
 check_optional_dependency() {
@@ -419,7 +539,7 @@ check_iroh_tooling() {
         return 0
     fi
 
-    echo "Optional dependency missing: iroh (preferred BLAKE3 content-addressing tool)"
+    echo "Optional validation tool missing: iroh (not used by snapshot hashing)"
     offer_iroh_install || true
     return 1
 }
@@ -430,11 +550,13 @@ check_kubo_tooling() {
         return 0
     fi
 
-    echo "Optional compatibility fallback missing: ipfs/Kubo"
+    echo "Optional validation tool missing: ipfs/Kubo (not used by snapshot hashing)"
     offer_kubo_install || true
     return 1
 }
 
+# Disabled Python-based BLAKE3 dependency checker.
+: <<'FOLDERSTAMP_DISABLED_PYTHON_DEPENDENCY'
 check_python_blake3() {
     if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         echo "Optional fallback OK: python3 blake3 module"
@@ -445,6 +567,8 @@ check_python_blake3() {
     echo "Suggested install: python3 -m pip install --user blake3"
     return 1
 }
+FOLDERSTAMP_DISABLED_PYTHON_DEPENDENCY
+
 
 check_dependency() {
     local command_name="$1"
@@ -472,6 +596,8 @@ tool_status() {
     fi
 }
 
+# Disabled Python-based BLAKE3 status helper.
+: <<'FOLDERSTAMP_DISABLED_PYTHON_STATUS'
 python_blake3_status() {
     if command_exists python3 && python3 -c 'import blake3' >/dev/null 2>&1; then
         printf 'python-blake3=available'
@@ -479,6 +605,8 @@ python_blake3_status() {
         printf 'python-blake3=missing'
     fi
 }
+FOLDERSTAMP_DISABLED_PYTHON_STATUS
+
 
 print_dependency_report() {
     # A stamp is an enduring record, not an installer transcript. Keep the
@@ -490,30 +618,43 @@ print_dependency_report() {
         "$(tool_status gix)" \
         "$(tool_status pijul)" \
         "$(tool_status iroh)" \
-        "$(python_blake3_status)" \
+        "$(tool_status b3sum)" \
         "$(tool_status ipfs)"
 }
 
 print_storage_details() {
-    local mount_source
-    mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')"
+    local mount_source df_output
 
-    if [[ -n "$mount_source" ]] && command_exists lsblk; then
-        lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null \
-            | awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print "Storage Device: " $0}'
-        return 0
+    mount_source=""
+    if command_exists df && command_exists awk; then
+        # Avoid assuming GNU df options are present on Android/toybox systems.
+        mount_source="$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')" || mount_source=""
     fi
 
-    if command_exists df; then
-        df -hP . 2>/dev/null | awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}'
-        return 0
+    if [[ -n "$mount_source" ]] && command_exists lsblk && command_exists awk; then
+        local lsblk_output
+        lsblk_output="$(lsblk -o NAME,SIZE,TYPE,VENDOR,MODEL 2>/dev/null |
+            awk -v device="$mount_source" 'index(device, "/" $1) || device == $1 {print $0}')" || lsblk_output=""
+        if [[ -n "$lsblk_output" ]]; then
+            printf 'Storage Device: %s\n' "$lsblk_output"
+            return 0
+        fi
+    fi
+
+    if command_exists df && command_exists awk; then
+        df_output="$(df -hP . 2>/dev/null)" || df_output=""
+        if [[ -n "$df_output" ]]; then
+            printf '%s\n' "$df_output" |
+                awk 'NR==2 {print "Storage Device: " $1 " mounted on " $6 " (" $2 " total, " $4 " available)"}' || true
+            return 0
+        fi
     fi
 
     echo "Storage Device: unavailable on this platform"
 }
 
 print_git_details() {
-    local current_branch first_remote_name first_remote_url
+    local current_branch first_remote_name first_remote_url remote_scheme remote_rest
 
     if [[ -d ".git" ]] && command_exists git; then
         current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
@@ -522,6 +663,12 @@ print_git_details() {
 
         if [[ -n "$first_remote_name" ]]; then
             first_remote_url="$(git remote get-url "$first_remote_name" 2>/dev/null || true)"
+            # Prevent embedded HTTPS credentials/tokens leaking into a snapshot.
+            if [[ "$first_remote_url" == *://*@* ]]; then
+                remote_scheme="${first_remote_url%%://*}"
+                remote_rest="${first_remote_url#*://}"
+                first_remote_url="${remote_scheme}://[credentials-redacted]@${remote_rest#*@}"
+            fi
             echo "First Git Remote: $first_remote_name - URL: ${first_remote_url:-unknown}"
         else
             echo "First Git Remote: none"
@@ -544,6 +691,10 @@ print_pijul_details() {
     fi
 }
 
+# Python-based CID methods are intentionally disabled for now.
+# Implement the interoperable CIDv1 encoder directly in Bash; see to-do.md.
+# The legacy Iroh blobs-add method is disabled because it stores content locally.
+: <<'FOLDERSTAMP_DISABLED_LEGACY_HASH_METHODS'
 cid_v0_basic_python() {
     local file="$1"
 
@@ -688,12 +839,60 @@ print_cid_hash() {
     fi
 }
 
+FOLDERSTAMP_DISABLED_LEGACY_HASH_METHODS
+
+print_content_hash() {
+    local file="$1"
+    local output hash
+
+    if ! command_exists b3sum; then
+        echo "BLAKE3-256 digest: unavailable (b3sum is not installed)"
+        return 0
+    fi
+
+    # Read via stdin so b3sum streams the file without parsing its filename.
+    if ! output="$(b3sum < "$file")"; then
+        echo "BLAKE3-256 digest: failed (b3sum could not read the file)" >&2
+        return 1
+    fi
+
+    # stdin is represented as "-", so b3sum prints "<digest>  -".
+    hash="${output%%[[:space:]]*}"
+    if [[ ! "$hash" =~ ^[[:xdigit:]]{64}$ ]]; then
+        echo "BLAKE3-256 digest: failed (unexpected b3sum output)" >&2
+        return 1
+    fi
+
+    printf 'BLAKE3-256 digest (Iroh-compatible): %s\n' "$hash"
+    echo "CIDv1/raw/BLAKE3: pending native Bash encoder (see to-do.md)"
+}
+
 stamp_path() {
     local file="$1"
-    local all
+    local target
 
-    all=$(printf '\n'; if command_exists stat; then stat "$file" 2>/dev/null || echo "stat failed for: $file"; else echo "stat unavailable for: $file"; echo "Suggested install: $(install_command_for coreutils)"; fi; print_cid_hash "$file"; printf '%s\n' '------------------------------')
-    printf "%s" "$all" | sed 's/%/%%/g'
+    printf '\n'
+    if ! command_exists stat || ! stat "$file" 2>/dev/null; then
+        printf 'stat failed for: %s\n' "$file"
+        return 1
+    fi
+
+    if [[ -L "$file" ]]; then
+        if command_exists readlink; then
+            target="$(readlink "$file" 2>/dev/null)" || {
+                printf 'Symlink target: unavailable\n'
+                return 1
+            }
+            printf 'Symlink target: %s\n' "$target"
+        else
+            printf 'Symlink target: unavailable (readlink missing)\n'
+        fi
+        printf 'CID hash: skipped (symbolic link, not file content)\n'
+    else
+        print_content_hash "$file"
+    fi
+
+    printf '%s\n' '------------------------------'
 }
 
 folderstamp_store_dir() {
@@ -712,7 +911,7 @@ next_folderstamp_path() {
     # New rotations are .folderstamp, .folderstamp1, .folderstamp2, ... . Also
     # recognize the old dotted form so an upgrade never overwrites history.
     for path in "$store_dir"/.folderstamp "$store_dir"/.folderstamp[0-9]* "$store_dir"/.folderstamp.[0-9]*; do
-        [[ -e "$path" ]] || continue
+        [[ -e "$path" || -L "$path" ]] || continue
         name="${path##*/}"
         if [[ "$name" == ".folderstamp" ]]; then
             max=0
@@ -725,37 +924,69 @@ next_folderstamp_path() {
         fi
     done
 
-    if [[ ! -e "$store_dir/.folderstamp" ]]; then
+    if [[ ! -e "$store_dir/.folderstamp" && ! -L "$store_dir/.folderstamp" ]]; then
         echo "$store_dir/.folderstamp"
     else
         echo "$store_dir/.folderstamp$((max + 1))"
     fi
 }
 
-prepare_folderstamp_output_path() {
+prepare_folderstamp_store() {
     local store_dir legacy_path next_path
+
     store_dir="$(folderstamp_store_dir)"
     legacy_path="$(legacy_folderstamp_path)"
 
+    # Do not follow metadata symlinks or migrate a symlink as if it were a stamp.
+    if [[ -L .meta ]] || [[ -e .meta && ! -d .meta ]]; then
+        echo "Refusing to use .meta: expected a real directory." >&2
+        return 1
+    fi
+    if [[ -L "$store_dir" ]] || [[ -e "$store_dir" && ! -d "$store_dir" ]]; then
+        echo "Refusing to use $store_dir: expected a real directory." >&2
+        return 1
+    fi
     mkdir -p "$store_dir"
 
-    if [[ -f "$legacy_path" ]]; then
-        mv "$legacy_path" "$(next_folderstamp_path "$store_dir")"
+    if [[ -L "$legacy_path" ]]; then
+        echo "Refusing to migrate legacy $legacy_path because it is a symbolic link." >&2
+        return 1
+    fi
+    if [[ -e "$legacy_path" && ! -f "$legacy_path" ]]; then
+        echo "Refusing to migrate legacy $legacy_path because it is not a regular file." >&2
+        return 1
     fi
 
-    next_path="$(next_folderstamp_path "$store_dir")"
-    echo "$next_path"
+    # Keep legacy data; never replace a numbered snapshot.
+    while [[ -f "$legacy_path" ]]; do
+        next_path="$(next_folderstamp_path "$store_dir")"
+        if ! mv -n "$legacy_path" "$next_path"; then
+            echo "Could not preserve legacy stamp $legacy_path." >&2
+            return 1
+        fi
+        # mv -n can report success without moving when another process wins.
+        [[ -e "$legacy_path" ]] || break
+    done
 }
 
 folderstamp_is_internal() {
     local file="${1#./}"
+    local basename="${file##*/}"
 
     case "$file" in
-        .git|.git/*|.meta/folderstamp|.meta/folderstamp/*|.folderstamp|.folderstamp[0-9]*|.folderstampignore)
+        .git|*/.git|.git/*|*/.git/*) return 0 ;;
+        .pijul|*/.pijul|.pijul/*|*/.pijul/*) return 0 ;;
+        .hg|*/.hg|.hg/*|*/.hg/*) return 0 ;;
+        .svn|*/.svn|.svn/*|*/.svn/*) return 0 ;;
+        .meta/folderstamp|.meta/folderstamp/*|*/.meta/folderstamp|*/.meta/folderstamp/*)
             return 0 ;;
-        *)
-            return 1 ;;
     esac
+
+    case "$basename" in
+        .folderstamp*|.folderstampignore|.git|.pijul|.hg|.svn)
+            return 0 ;;
+    esac
+    return 1
 }
 
 folderstamp_ignore_matches() {
@@ -801,82 +1032,365 @@ folderstamp_is_ignored() {
 }
 
 should_stamp_path() {
-    [[ -f "$1" ]] && ! folderstamp_is_ignored "$1"
+    # Include links as directory entries, including broken links, without following them.
+    { [[ -f "$1" ]] || [[ -L "$1" ]]; } && ! folderstamp_is_ignored "$1"
+}
+
+print_snapshot_header() {
+    local mode="$1"
+
+    echo "This folder: $(pwd)"
+    echo "Platform: $(platform_name)"
+    print_storage_details
+    echo "folderstamp version: $FOLDERSTAMP_VERSION"
+    if [[ "$mode" == "recursive" ]]; then
+        echo "Method: Recursive"
+    else
+        echo "Method: Non-recursive"
+    fi
+    print_dependency_report
+    print_git_details
+    print_pijul_details
+}
+
+build_snapshot_file_list() {
+    local mode="$1"
+    local list_file="$2"
+    local work_dir="$3"
+    local candidates="$work_dir/candidates"
+    local list_tmp="$list_file.tmp"
+    local file
+
+    : > "$list_tmp"
+
+    if [[ "$mode" == "recursive" ]]; then
+        if ! find . \( -type d \( \
+            -name .git -o -name .pijul -o -name .hg -o -name .svn -o \
+            -path './.meta/folderstamp' \
+        \) -prune \) -o \( \( -type f -o -type l \) -print0 \) > "$candidates"; then
+            echo "Could not enumerate files for the snapshot." >&2
+            return 1
+        fi
+
+        while IFS= read -r -d '' file; do
+            if should_stamp_path "$file"; then
+                printf '%s\0' "$file" >> "$list_tmp" || return 1
+            fi
+        done < "$candidates"
+    else
+        shopt -s dotglob nullglob
+        for file in ./*; do
+            if should_stamp_path "$file"; then
+                printf '%s\0' "$file" >> "$list_tmp" || return 1
+            fi
+        done
+    fi
+
+    mv "$list_tmp" "$list_file" || return 1
+    rm -f "$candidates"
+}
+
+write_snapshot_checkpoint() {
+    local checkpoint="$1"
+    local root="$2"
+    local mode="$3"
+    local processed="$4"
+    local safe_bytes="$5"
+    local checkpoint_tmp
+
+    command_exists sync || {
+        echo "Cannot guarantee resumable snapshots: sync is missing." >&2
+        return 1
+    }
+    checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
+
+    if ! printf '%s\0%s\0%s\0%s\0' \
+        "$root" "$mode" "$processed" "$safe_bytes" > "$checkpoint_tmp"; then
+        rm -f "$checkpoint_tmp"
+        return 1
+    fi
+
+    # The manifest is synced before advancing the checkpoint. After a crash,
+    # the checkpoint therefore never intentionally points past durable output.
+    sync || return 1
+    if ! mv -f "$checkpoint_tmp" "$checkpoint"; then
+        rm -f "$checkpoint_tmp"
+        return 1
+    fi
+    sync
+}
+
+resume_folderstamp() {
+    local incomplete="$1"
+    local work_dir store_dir expected_store work_real checkpoint list_file entry_file
+    local saved_root saved_mode saved_processed saved_bytes root_now actual_bytes
+    local final_path
+
+    ensure_b3sum || true
+
+    if [[ -z "$incomplete" || ! -f "$incomplete" || -L "$incomplete" ]]; then
+        echo "Select an existing regular *.incomplete snapshot file." >&2
+        return 1
+    fi
+    if [[ "${incomplete##*/}" != "folderstamp.incomplete" ]]; then
+        echo "The selected file must be named folderstamp.incomplete." >&2
+        return 1
+    fi
+
+    work_dir="$(dirname "$incomplete")"
+    store_dir="$(folderstamp_store_dir)"
+    if [[ ! -d "$work_dir" || -L "$work_dir" || ! -d "$store_dir" ]]; then
+        echo "Incomplete snapshot workspace is missing or unsafe." >&2
+        return 1
+    fi
+
+    expected_store="$(cd "$store_dir" && pwd -P)" || return 1
+    work_real="$(cd "$work_dir" && pwd -P)" || return 1
+    case "$work_real" in
+        "$expected_store"/.folderstamp.incomplete.*) ;;
+        *)
+            echo "The selected incomplete file is not in this folder's Folderstamp workspace." >&2
+            return 1 ;;
+    esac
+
+    checkpoint="$work_dir/checkpoint"
+    list_file="$work_dir/files.list"
+    entry_file="$work_dir/current-entry"
+
+    if [[ ! -f "$checkpoint" || -L "$checkpoint" ]]; then
+        echo "Checkpoint data is missing or unsafe; the incomplete file was preserved." >&2
+        return 1
+    fi
+
+    # The NUL-delimited fields keep unusual directory names safe.
+    exec 9< "$checkpoint"
+    IFS= read -r -d '' saved_root <&9 || { exec 9<&-; echo "Invalid checkpoint root." >&2; return 1; }
+    IFS= read -r -d '' saved_mode <&9 || { exec 9<&-; echo "Invalid checkpoint mode." >&2; return 1; }
+    IFS= read -r -d '' saved_processed <&9 || { exec 9<&-; echo "Invalid checkpoint count." >&2; return 1; }
+    IFS= read -r -d '' saved_bytes <&9 || { exec 9<&-; echo "Invalid checkpoint size." >&2; return 1; }
+    exec 9<&-
+
+    if [[ ! "$saved_processed" =~ ^[0-9]+$ || ! "$saved_bytes" =~ ^[0-9]+$ ]]; then
+        echo "Checkpoint counters are invalid; the incomplete file was preserved." >&2
+        return 1
+    fi
+    if [[ "$saved_mode" != "recursive" && "$saved_mode" != "non-recursive" ]]; then
+        echo "Checkpoint mode is invalid." >&2
+        return 1
+    fi
+
+    root_now="$(pwd -P)"
+    if [[ "$saved_root" != "$root_now" ]]; then
+        echo "Resume from the original directory: $saved_root" >&2
+        return 1
+    fi
+
+    # If power failed before the initial list was committed, safely rebuild it.
+    if [[ ! -f "$list_file" || -L "$list_file" ]]; then
+        if (( saved_processed != 0 )); then
+            echo "The file list is missing; refusing to guess which files were completed." >&2
+            return 1
+        fi
+        rm -f "$list_file.tmp" "$work_dir/candidates"
+        if ! build_snapshot_file_list "$saved_mode" "$list_file" "$work_dir"; then
+            echo "Could not rebuild the file list. Incomplete data remains at: $incomplete" >&2
+            return 1
+        fi
+    fi
+
+    actual_bytes=$(( $(wc -c < "$incomplete") ))
+    if (( actual_bytes < saved_bytes )); then
+        echo "The incomplete file is shorter than its last durable checkpoint; refusing to discard or guess data." >&2
+        return 1
+    fi
+    if (( actual_bytes > saved_bytes )); then
+        command_exists truncate || {
+            echo "Resume needs the truncate command; install coreutils and try again." >&2
+            return 1
+        }
+        truncate -s "$saved_bytes" "$incomplete" || return 1
+        sync || return 1
+    fi
+
+    # A zero-byte checkpoint means the header had not been committed yet.
+    if (( saved_bytes == 0 )); then
+        if ! print_snapshot_header "$saved_mode" > "$incomplete"; then
+            echo "Could not write the snapshot header." >&2
+            return 1
+        fi
+        sync || return 1
+        saved_bytes=$(( $(wc -c < "$incomplete") ))
+        write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$saved_processed" "$saved_bytes" || return 1
+    fi
+
+    echo "Resuming incomplete snapshot: $incomplete"
+    local processed=0 file next_bytes
+    while IFS= read -r -d '' file; do
+        processed=$((processed + 1))
+        if (( processed <= saved_processed )); then
+            continue
+        fi
+
+        if [[ ! -f "$file" && ! -L "$file" ]]; then
+            printf '\nFile no longer exists; omitted from this snapshot: %q\n------------------------------\n' "$file" > "$entry_file"
+        elif ! stamp_path "$file" > "$entry_file"; then
+            echo "Could not stamp: $file" >&2
+            echo "Incomplete work preserved at: $incomplete" >&2
+            return 1
+        fi
+
+        if ! cat "$entry_file" >> "$incomplete"; then
+            echo "Could not append the current entry; incomplete work preserved at: $incomplete" >&2
+            return 1
+        fi
+        sync || {
+            echo "Could not sync snapshot data; resume file preserved at: $incomplete" >&2
+            return 1
+        }
+        next_bytes=$(( $(wc -c < "$incomplete") ))
+        if ! write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$processed" "$next_bytes"; then
+            echo "Could not advance the checkpoint; resume file preserved at: $incomplete" >&2
+            return 1
+        fi
+    done < "$list_file"
+
+    # Publish only a complete manifest. mv -n plus the post-check avoids
+    # replacing a rotation created by another concurrent save.
+    while :; do
+        final_path="$(next_folderstamp_path "$store_dir")"
+        if [[ -e "$final_path" || -L "$final_path" ]]; then
+            continue
+        fi
+        if mv -n "$incomplete" "$final_path" && [[ ! -e "$incomplete" ]]; then
+            break
+        fi
+        if [[ ! -e "$incomplete" ]]; then
+            echo "Snapshot may have been published, but its final path could not be confirmed." >&2
+            return 1
+        fi
+    done
+
+    rm -f "$checkpoint" "$list_file" "$entry_file" "$list_file.tmp" "$work_dir/candidates"
+    rmdir "$work_dir" 2>/dev/null || true
+    echo "Saved completed folderstamp: $final_path"
 }
 
 save_folderstamp() {
-    local output_path
-    output_path="$(prepare_folderstamp_output_path)"
+    local store_dir work_dir incomplete root mode
 
-    echo "🤓📝 Working..."
-    echo "Saving folderstamp to: $output_path"
-    display "$1" "$2" > "$output_path"
+    ensure_b3sum || true
+    store_dir="$(folderstamp_store_dir)"
+    prepare_folderstamp_store || return 1
+    command_exists mktemp || {
+        echo "Cannot save safely: mktemp is missing." >&2
+        return 1
+    }
+    command_exists sync || {
+        echo "Cannot create a resumable snapshot safely: sync is missing." >&2
+        return 1
+    }
+
+    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+        mode="recursive"
+    else
+        mode="non-recursive"
+    fi
+
+    work_dir="$(mktemp -d "$store_dir/.folderstamp.incomplete.XXXXXX")" || return 1
+    incomplete="$work_dir/folderstamp.incomplete"
+    root="$(pwd -P)"
+
+    # The .incomplete extension is present from the beginning. A power loss
+    # therefore leaves a clearly named recovery candidate, not an anonymous tmp.
+    : > "$incomplete"
+    if ! write_snapshot_checkpoint "$work_dir/checkpoint" "$root" "$mode" 0 0; then
+        echo "Incomplete workspace preserved at: $incomplete" >&2
+        return 1
+    fi
+
+    if ! build_snapshot_file_list "$mode" "$work_dir/files.list" "$work_dir"; then
+        echo "Could not prepare the file list. Incomplete workspace preserved at: $incomplete" >&2
+        return 1
+    fi
+
+    resume_folderstamp "$incomplete"
 }
 
-function display {
-rocketlaunch_dir=`pwd` #from https://unix.stackexchange.com/a/52919/470623
-echo "This folder: $rocketlaunch_dir"
-echo "Platform: $(platform_name)"
-#-
-# Add storage device details with fallbacks for Linux, Termux, Cygwin and RedoxOS.
-print_storage_details
-#-
-echo "folderstamp version: $FOLDERSTAMP_VERSION"
-if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]; then
-   method="Recursive"
-else
-   method="Non-recursive"
-fi
-echo "Method: $method"  # Add this line to show the method used
+display() {
+    local mode file
 
-# Display current git branch and first git remote name with URL if .git folder is present
-print_dependency_report
-print_git_details
-print_pijul_details
+    ensure_b3sum || true
 
-if [[ "$2" == "--recursive" ]] || [[ "$2" == "-r" ]]
-   then
-# Do not even traverse internal repositories or the stamp store.
-find . \( -type d \( -name .git -o -path './.meta/folderstamp' \) -prune \) -o -type f -print0 | while IFS= read -r -d '' file
-do
-    should_stamp_path "$file" && stamp_path "$file"
-done
-# from https://stackoverflow.com/a/25948226/5623661
-   else
-# NOTE : Quote it else use array to avoid problems #
-for file in ./*
-do
-  should_stamp_path "$file" && stamp_path "$file"
-# from https://stackoverflow.com/a/25948226/5623661
-done
-# based from https://www.cyberciti.biz/faq/bash-loop-over-file/
-fi
+    if [[ "$2" == "--recursive" || "$2" == "-r" ]]; then
+        mode="recursive"
+    else
+        mode="non-recursive"
+    fi
+
+    print_snapshot_header "$mode"
+
+    if [[ "$mode" == "recursive" ]]; then
+        command_exists find || {
+            echo "Cannot use recursive mode: find is missing." >&2
+            return 1
+        }
+        find . \( -type d \( -name .git -o -name .pijul -o -name .hg -o -name .svn -o -path './.meta/folderstamp' \) -prune \) -o \( \( -type f -o -type l \) -print0 \) |
+        while IFS= read -r -d '' file; do
+            if should_stamp_path "$file"; then
+                stamp_path "$file" || return 1
+            fi
+        done
+    else
+        shopt -s dotglob nullglob
+        for file in ./*; do
+            if should_stamp_path "$file"; then
+                stamp_path "$file" || return 1
+            fi
+        done
+    fi
 }
 
 print_help() {
     cat <<'HELP'
-Usage: folderstamp <display|save> [--recursive|-r]
+Usage:
+  folderstamp display [--recursive|-r]
+  folderstamp save [--recursive|-r]
+  folderstamp resume PATH_TO_FOLDERSTAMP_INCOMPLETE
+  folderstamp --help
 
 Commands:
-  display              Print a stamp for files in the current directory.
-  save                 Save a stamp under .meta/folderstamp/.
+  display              Print a snapshot to standard output.
+  save                 Create a resumable snapshot under .meta/folderstamp/.
+  resume PATH          Continue a selected folderstamp.incomplete file.
 
-Options:
-  --recursive, -r      Include files below the current directory.
-  --help, -h           Show this help.
+Hidden files are included. Symbolic links are recorded as links and never
+followed or hashed. VCS databases (.git, .pijul, .hg and .svn), the internal
+stamp store, and legacy .folderstamp* files are excluded. .folderstampignore
+supports a limited gitignore-like syntax, not the complete Git ignore engine.
 
-Ignored by default: .git/, .meta/folderstamp/, .folderstamp*, and
-.folderstampignore. Add gitignore-style patterns to .folderstampignore;
-later !patterns re-include matching files.
+Incomplete snapshots keep their .incomplete extension and a private checkpoint.
+Resume from the same original directory and do not modify the file tree while
+resuming; the saved file list preserves the original traversal order.
 HELP
 }
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
    print_help
-elif [ "$1" = "save" ];then
-   save_folderstamp "$1" "$2"
-elif [ "$1" = "display" ];then
-   display "$1" "$2"
+elif [[ "${1:-}" == "save" ]]; then
+   save_folderstamp "$1" "${2:-}"
+elif [[ "${1:-}" == "resume" ]]; then
+   if [[ -z "${2:-}" ]]; then
+       echo "resume requires the path to a folderstamp.incomplete file." >&2
+       print_help >&2
+       exit 2
+   fi
+   resume_folderstamp "$2"
+elif [[ "${1:-}" == "display" ]]; then
+   display "$1" "${2:-}"
+else
+   echo "Unknown command: ${1:-<none>}" >&2
+   print_help >&2
+   exit 2
 fi
 
 #-to fix:     if [ "$2" = "--hash" ];then
