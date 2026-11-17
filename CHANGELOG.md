@@ -11,6 +11,29 @@ O formato segue a ideia do [Keep a Changelog](https://keepachangelog.com/), com 
 - Corrigido o tratamento de argumentos ausentes e comandos desconhecidos.
 - Corrigida a geração de snapshots para incluir dotfiles no modo não-recursivo.
 - Corrigida a exclusão de arquivos internos e bancos Git, Pijul, Mercurial e Subversion em caminhos aninhados.
+- Links simbólicos agora são registrados com metadados `stat` e destino `readlink`, sem seguir o destino nem calcular hash do conteúdo.
+- Corrigida a saída de metadados, removendo a duplicação de sinais de porcentagem e evitando armazenar a saída inteira em uma variável.
+- Tornado o fallback CIDv0 single-block e o fallback CIDv1/BLAKE3 incrementais, evitando carregar arquivos inteiros na memória.
+- Tornados os diagnósticos de armazenamento tolerantes a falhas de `df` e `lsblk`.
+- Redigidas credenciais embutidas em URLs de remotes Git antes de incluí-las em snapshots.
+
+### Safety
+- O comando `save` mantém um arquivo `folderstamp.incomplete` em um workspace próprio, acompanhado de lista NUL-delimited e checkpoint.
+- O progresso só avança depois que os dados do snapshot e o checkpoint são sincronizados; falhas deixam o arquivo incompleto disponível para retomada.
+- Adicionado `folderstamp resume PATH`, que retoma a partir do último checkpoint durável e não publica um snapshot final até concluir.
+- O instalador preserva a instalação anterior em um arquivo de backup antes de publicar uma nova versão.
+- Iroh/Kubo continuam oferecidos no Termux somente após confirmação explícita, com arquitetura do dispositivo exibida e teste do binário antes de substituir uma instalação existente.
+
+### Documentation
+- README atualizado com links simbólicos, recuperação de snapshots interrompidos, requisitos de Termux e limitações de compatibilidade Android/Bionic.
+- To-do atualizado com testes de nomes complexos, gitignore, CIDv0 single-block, verificação criptográfica de downloads e suporte futuro a cartão SD no Termux (PR 2/2).
+
+
+### Fixed
+- Alterado o shebang do executável para `#!/usr/bin/env bash`, evitando assumir que Bash existe em `/bin/bash` em ambientes como Termux.
+- Corrigido o tratamento de argumentos ausentes e comandos desconhecidos.
+- Corrigida a geração de snapshots para incluir dotfiles no modo não-recursivo.
+- Corrigida a exclusão de arquivos internos e bancos Git, Pijul, Mercurial e Subversion em caminhos aninhados.
 - Corrigido o tratamento de links simbólicos: eles não são seguidos nem migrados como snapshots.
 - Corrigida a saída de metadados, removendo a duplicação de sinais de porcentagem e evitando armazenar a saída inteira em uma variável.
 - Tornado o fallback CIDv0 single-block e o fallback CIDv1/BLAKE3 incrementais, evitando carregar arquivos inteiros na memória.
