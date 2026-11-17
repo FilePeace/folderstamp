@@ -10,13 +10,12 @@ Folderstamp creates a human-readable snapshot of regular files in the current di
 - `sync` and `wc` for durable checkpoint/resume support when using `save`.
 - `find` for recursive mode.
 - `df` and `awk` are optional and used for storage diagnostics.
-- A content-hash provider is optional:
-  - Iroh CLI (preferred when the supported legacy blob CLI is installed).
-  - Python 3 + the `blake3` module.
-  - Kubo/IPFS as a compatibility fallback.
-  - Python 3 alone provides a basic single-block CIDv0 fallback.
-
-Folderstamp does not require Git, Gitoxide, Pijul, Iroh, Python, or Kubo merely to list file metadata. Missing optional tools should not prevent a normal metadata snapshot.
+- BLAKE3-256 content digests are calculated with `b3sum`, using streaming input rather than loading whole files into memory.
+- When `b3sum` is missing, Folderstamp attempts to install the `b3sum` package with `apt` on Debian/Ubuntu or `pkg` on Termux. If installation fails, metadata snapshots still work without a content digest.
+- The BLAKE3 digest uses the same BLAKE3-256 content-hash profile used by Iroh blobs. Folderstamp does not call Iroh's blob-add operation and does not store content in Iroh, Kubo, or another node.
+- CIDv1/raw/BLAKE3 wrapping is temporarily not emitted. The Python implementations are disabled while a native Bash-compatible encoder is planned in `to-do.md`.
+- Iroh and Kubo remain optional tools for future/manual validation only; neither is part of the snapshot hashing path.
+- Folderstamp does not require Git, Gitoxide, Pijul, Iroh, Python, or Kubo merely to list file metadata. If `b3sum` cannot be installed, metadata is still recorded without the content digest.
 
 ## Install
 
@@ -90,17 +89,17 @@ folderstamp --help
 
 These measures reduce accidental clobbering and preserve recoverable work after interruption. They are not a substitute for backups, and simultaneous writers on unusual network filesystems may still have filesystem-specific semantics.
 
-## Content identifiers and limitations
+## BLAKE3 digests and CIDv1 roadmap
 
-- Iroh's supported legacy blob CLI computes a BLAKE3 blob digest; Folderstamp wraps it as CIDv1/raw/BLAKE3.
-- Python + `blake3` computes the same CIDv1/raw/BLAKE3 profile incrementally.
-- Kubo/IPFS is retained as a compatibility provider.
-- The Python CIDv0 fallback is explicitly single-block UnixFS/DAG-PB. It is not a full IPFS importer: it does not implement chunking, directory DAGs, or importer layout options.
-- A raw BLAKE3 digest or Iroh BlobId is not itself a CID; the script only labels the value as a CID after wrapping it in the CIDv1 structure.
+- The snapshot path uses `b3sum` as its only content-digest engine. It reads each file through standard input, allowing streaming operation and avoiding filename parsing issues.
+- The resulting 32-byte BLAKE3-256 digest is the content-hash profile used by Iroh blobs. Folderstamp does not invoke `iroh blobs add`, `ipfs add`, or any operation that stores file content in a local node.
+- Python-based CIDv0/CIDv1 methods are disabled. The snapshot currently displays the BLAKE3 digest, not a CID.
+- Implementing the CIDv1/raw/BLAKE3 encoder directly in Bash is a tracked task. The encoder must wrap the digest using CIDv1 (version 1), raw codec (0x55), BLAKE3-256 multihash code (0x1e), and a 32-byte digest, then produce lowercase base32 multibase output.
+- Iroh and Kubo are optional validation tools only; any future validation must prove that it does not persist the input blob.
 
 ## Termux notes
 
-Termux is an Android environment, not a conventional GNU/Linux distribution. Its standard bootstrap normally includes `coreutils` and the `stat` command; install/restore it with `pkg install coreutils` only if it is missing. Folderstamp keeps the optional Iroh and Kubo download offers available in Termux, but requires an explicit `yes`, displays the phone's `uname -m` architecture, and tests the downloaded executable before replacing anything. The upstream assets currently use generic Linux targets, not a dedicated Android/Bionic target, so successful execution is not guaranteed. A failed test leaves the previous executable untouched and keeps the downloaded archive for inspection.
+Termux is an Android environment, not a conventional GNU/Linux distribution. Folderstamp attempts `pkg install -y b3sum` when the command is missing. Its standard bootstrap normally includes `coreutils` and the `stat` command; install/restore it with `pkg install coreutils` only if it is missing. Folderstamp keeps the optional Iroh and Kubo download offers available in Termux, but requires an explicit `yes`, displays the phone's `uname -m` architecture, and tests the downloaded executable before replacing anything. The upstream assets currently use generic Linux targets, not a dedicated Android/Bionic target, so successful execution is not guaranteed. A failed test leaves the previous executable untouched and keeps the downloaded archive for inspection.
 
 Support for saving snapshots directly to removable SD-card locations on Android/Termux is not implemented yet. See the SD-card task in `to-do.md` for the planned second phase.
 
@@ -113,5 +112,5 @@ The main script uses `#!/usr/bin/env bash` instead of assuming Bash exists at `/
 - `sync` or `wc` missing: install the platform's core utilities before using resumable `save`.
 - A `.incomplete` file remains: resume it from the original source directory with `folderstamp resume PATH`.
 - Recursive mode cannot start: install `find` (Termux package: `findutils`).
-- No CID is shown: continue using metadata snapshots, or install one of the optional content-hash providers.
+- No BLAKE3 digest is shown: Folderstamp attempts to install `b3sum` with `apt` (Debian/Ubuntu) or `pkg` (Termux). You can also install it manually with `apt install b3sum` or `pkg install b3sum`.
 - Installer refuses to migrate a legacy stamp: inspect the path manually. It may be a symlink or special file, and Folderstamp intentionally will not move it automatically.
