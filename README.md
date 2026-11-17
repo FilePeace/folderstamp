@@ -21,22 +21,17 @@ Folderstamp creates a human-readable snapshot of regular files in the current di
 
 ### Termux
 
-Install Bash and the core utilities from the Termux package manager:
-
-```sh
-pkg update
-pkg install bash coreutils findutils
-```
-
-Then install from a cloned repository:
+The POSIX installer bootstraps its own Termux prerequisites. From a cloned repository, run it with the system `sh`:
 
 ```sh
 git clone https://github.com/FilePeace/folderstamp.git
 cd folderstamp
-bash install.sh
+sh install.sh
 ```
 
-The installer targets `$PREFIX/bin` in Termux. It does not use `sudo`.
+On Termux, the installer detects the environment and checks for Bash, Coreutils (including `stat`, `dirname`, and `mktemp`), and Findutils (including `find`). It runs `pkg update` and installs only the missing package(s) with `pkg install -y`. If package installation fails, it stops before touching an existing Folderstamp installation.
+
+The installer itself uses POSIX `sh`, so Bash does not need to exist before the bootstrap. It targets `$PREFIX/bin` in Termux and does not use `sudo`.
 
 ### Other Unix-like systems
 
