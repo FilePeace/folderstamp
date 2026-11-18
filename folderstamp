@@ -1149,7 +1149,7 @@ write_snapshot_checkpoint() {
     }
     checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
 
-    if ! printf '%s\0%s\0%s\0%s\0' \
+    if ! printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$root" "$mode" "$processed" "$safe_bytes" \
         "$list_bytes" "$list_crc" "$list_count" > "$checkpoint_tmp"; then
         rm -f "$checkpoint_tmp"
