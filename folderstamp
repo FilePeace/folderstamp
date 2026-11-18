@@ -1117,7 +1117,7 @@ snapshot_file_list_metadata() {
         [[ "$last_byte" == "0" ]] || return 1
     fi
 
-    printf '%s %s %s\\n' "$bytes" "$crc" "$count"
+    printf '%s %s %s\n' "$bytes" "$crc" "$count"
 }
 
 validate_snapshot_file_list() {
@@ -1150,7 +1150,7 @@ write_snapshot_checkpoint() {
     checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
 
     if ! printf '%s\0%s\0%s\0%s\0' \
-        "$root" "$mode" "$processed" "$safe_bytes" \\
+        "$root" "$mode" "$processed" "$safe_bytes" \
         "$list_bytes" "$list_crc" "$list_count" > "$checkpoint_tmp"; then
         rm -f "$checkpoint_tmp"
         return 1
