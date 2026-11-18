@@ -1293,7 +1293,7 @@ resume_folderstamp() {
         fi
         sync || return 1
         saved_bytes=$(( $(wc -c < "$incomplete") ))
-        write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$saved_processed" "$saved_bytes" || return 1
+        write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$saved_processed" "$saved_bytes" "$saved_list_bytes" "$saved_list_crc" "$saved_list_count" || return 1
     fi
 
     echo "Resuming incomplete snapshot: $incomplete"
@@ -1321,7 +1321,7 @@ resume_folderstamp() {
             return 1
         }
         next_bytes=$(( $(wc -c < "$incomplete") ))
-        if ! write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$processed" "$next_bytes"; then
+        if ! write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$processed" "$next_bytes" "$saved_list_bytes" "$saved_list_crc" "$saved_list_count"; then
             echo "Could not advance the checkpoint; resume file preserved at: $incomplete" >&2
             return 1
         fi
