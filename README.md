@@ -9,7 +9,7 @@ Folderstamp creates a human-readable snapshot of regular files in the current di
 - Bash 4+ (the script is written for Bash, not POSIX sh).
 - `stat` for file metadata. The standard Termux bootstrap normally includes `coreutils`, which provides `stat`; if it is missing, install/restore it with `pkg install coreutils`.
 - `readlink` to display symbolic-link targets (optional; without it, the link metadata is still shown).
-- `sync` and `wc` for durable checkpoint/resume support when using `save`.
+- `sync`, `wc`, `cksum`, `tail`, `od`, and `tr` for durable manifest/checkpoint validation when using `save`.
 - `find` for recursive mode.
 - `df` and `awk` are optional and used for storage diagnostics.
 - BLAKE3-256 content digests are calculated with `b3sum`, using streaming input rather than loading whole files into memory.
@@ -60,10 +60,10 @@ folderstamp --help
 
 - `display` writes the snapshot to standard output.
 - `save` stores a completed snapshot under `.meta/folderstamp/`.
-- A save is created in a dedicated workspace with a `folderstamp.incomplete` file and a checkpoint. After every completed file entry, the output and checkpoint are synced before progress advances.
+- A save is created in a dedicated workspace with a `folderstamp.incomplete` file and a checkpoint. The NUL-delimited file list is synced before it is committed to the checkpoint; its byte length, POSIX `cksum` checksum, and entry count are then validated on every resume. After every completed file entry, the output and checkpoint are synced before progress advances.
 - If the process fails or the device loses power, the `.incomplete` file and its checkpoint are kept. Folderstamp does not discard partial work.
 - Resume by passing the selected `folderstamp.incomplete` path to `folderstamp resume PATH`. Resume from the original directory. The saved file list preserves the original traversal order; do not modify the source tree before resuming.
-- On resume, bytes beyond the last durable checkpoint are truncated and the current uncommitted entry is regenerated. If the incomplete file is shorter than the checkpoint, Folderstamp refuses to guess or discard data.
+- On resume, bytes beyond the last durable checkpoint are truncated and the current uncommitted entry is regenerated. If the incomplete file is shorter than the checkpoint, Folderstamp refuses to guess or discard data. A missing, truncated, or changed file list is rejected instead of being treated as a complete manifest. The manifest checksum detects accidental corruption; it is not a cryptographic authenticity signature.
 - Existing completed snapshots are rotated to the next available name and are not intentionally overwritten.
 
 ## Included and excluded paths
