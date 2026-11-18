@@ -1087,7 +1087,48 @@ build_snapshot_file_list() {
     fi
 
     mv "$list_tmp" "$list_file" || return 1
+    # Persist the manifest publication before any checkpoint can trust it.
+    sync || {
+        echo "Could not sync the published file list." >&2
+        return 1
+    }
     rm -f "$candidates"
+}
+
+snapshot_file_list_metadata() {
+    local list_file="$1"
+    local bytes crc count last_byte
+
+    [[ -f "$list_file" && ! -L "$list_file" ]] || return 1
+    bytes="$(wc -c < "$list_file")" || return 1
+    bytes="${bytes//[[:space:]]/}"
+    read -r crc _ < <(cksum < "$list_file") || return 1
+
+    count=0
+    while IFS= read -r -d '' _entry; do
+        count=$((count + 1))
+    done < "$list_file"
+
+    # A non-empty manifest must end at a NUL boundary. A truncated final
+    # pathname is otherwise silently ignored by Bash's read -d '' loop.
+    if (( bytes > 0 )); then
+        last_byte="$(tail -c 1 "$list_file" | od -An -tu1 | tr -d '[:space:]')" || return 1
+        [[ "$last_byte" == "0" ]] || return 1
+    fi
+
+    printf '%s %s %s\\n' "$bytes" "$crc" "$count"
+}
+
+validate_snapshot_file_list() {
+    local list_file="$1"
+    local expected_bytes="$2"
+    local expected_crc="$3"
+    local expected_count="$4"
+    local actual
+
+    [[ "$expected_bytes" =~ ^[0-9]+$ && "$expected_crc" =~ ^[0-9]+$ && "$expected_count" =~ ^[0-9]+$ ]] || return 1
+    actual="$(snapshot_file_list_metadata "$list_file")" || return 1
+    [[ "$actual" == "$expected_bytes $expected_crc $expected_count" ]]
 }
 
 write_snapshot_checkpoint() {
@@ -1096,6 +1137,9 @@ write_snapshot_checkpoint() {
     local mode="$3"
     local processed="$4"
     local safe_bytes="$5"
+    local list_bytes="${6:-pending}"
+    local list_crc="${7:-pending}"
+    local list_count="${8:-pending}"
     local checkpoint_tmp
 
     command_exists sync || {
@@ -1105,7 +1149,8 @@ write_snapshot_checkpoint() {
     checkpoint_tmp="$(mktemp "$checkpoint.XXXXXX")" || return 1
 
     if ! printf '%s\0%s\0%s\0%s\0' \
-        "$root" "$mode" "$processed" "$safe_bytes" > "$checkpoint_tmp"; then
+        "$root" "$mode" "$processed" "$safe_bytes" \\
+        "$list_bytes" "$list_crc" "$list_count" > "$checkpoint_tmp"; then
         rm -f "$checkpoint_tmp"
         return 1
     fi
@@ -1124,6 +1169,7 @@ resume_folderstamp() {
     local incomplete="$1"
     local work_dir store_dir expected_store work_real checkpoint list_file entry_file
     local saved_root saved_mode saved_processed saved_bytes root_now actual_bytes
+    local saved_list_bytes saved_list_crc saved_list_count list_metadata
     local final_path
 
     ensure_b3sum || true
@@ -1168,10 +1214,22 @@ resume_folderstamp() {
     IFS= read -r -d '' saved_mode <&9 || { exec 9<&-; echo "Invalid checkpoint mode." >&2; return 1; }
     IFS= read -r -d '' saved_processed <&9 || { exec 9<&-; echo "Invalid checkpoint count." >&2; return 1; }
     IFS= read -r -d '' saved_bytes <&9 || { exec 9<&-; echo "Invalid checkpoint size." >&2; return 1; }
+    IFS= read -r -d '' saved_list_bytes <&9 || { exec 9<&-; echo "Invalid manifest size in checkpoint." >&2; return 1; }
+    IFS= read -r -d '' saved_list_crc <&9 || { exec 9<&-; echo "Invalid manifest checksum in checkpoint." >&2; return 1; }
+    IFS= read -r -d '' saved_list_count <&9 || { exec 9<&-; echo "Invalid manifest count in checkpoint." >&2; return 1; }
     exec 9<&-
 
     if [[ ! "$saved_processed" =~ ^[0-9]+$ || ! "$saved_bytes" =~ ^[0-9]+$ ]]; then
         echo "Checkpoint counters are invalid; the incomplete file was preserved." >&2
+        return 1
+    fi
+    if [[ "$saved_list_bytes" != "pending" || "$saved_list_crc" != "pending" || "$saved_list_count" != "pending" ]]; then
+        if [[ ! "$saved_list_bytes" =~ ^[0-9]+$ || ! "$saved_list_crc" =~ ^[0-9]+$ || ! "$saved_list_count" =~ ^[0-9]+$ ]]; then
+            echo "Manifest checkpoint metadata is invalid; the incomplete file was preserved." >&2
+            return 1
+        fi
+    elif (( saved_processed != 0 || saved_bytes != 0 )); then
+        echo "The manifest was not committed before snapshot data; refusing unsafe resume." >&2
         return 1
     fi
     if [[ "$saved_mode" != "recursive" && "$saved_mode" != "non-recursive" ]]; then
@@ -1185,17 +1243,24 @@ resume_folderstamp() {
         return 1
     fi
 
-    # If power failed before the initial list was committed, safely rebuild it.
-    if [[ ! -f "$list_file" || -L "$list_file" ]]; then
-        if (( saved_processed != 0 )); then
-            echo "The file list is missing; refusing to guess which files were completed." >&2
-            return 1
-        fi
-        rm -f "$list_file.tmp" "$work_dir/candidates"
+    # A pending manifest checkpoint means a crash may have happened before
+    # its metadata was committed. Rebuild it from the source tree only while
+    # no snapshot entries have been processed.
+    if [[ "$saved_list_bytes" == "pending" ]]; then
+        rm -f "$list_file" "$list_file.tmp" "$work_dir/candidates"
         if ! build_snapshot_file_list "$saved_mode" "$list_file" "$work_dir"; then
             echo "Could not rebuild the file list. Incomplete data remains at: $incomplete" >&2
             return 1
         fi
+        list_metadata="$(snapshot_file_list_metadata "$list_file")" || {
+            echo "Could not validate the rebuilt file list." >&2
+            return 1
+        }
+        read -r saved_list_bytes saved_list_crc saved_list_count <<< "$list_metadata"
+        write_snapshot_checkpoint "$checkpoint" "$saved_root" "$saved_mode" "$saved_processed" "$saved_bytes" "$saved_list_bytes" "$saved_list_crc" "$saved_list_count" || return 1
+    elif ! validate_snapshot_file_list "$list_file" "$saved_list_bytes" "$saved_list_crc" "$saved_list_count"; then
+        echo "The saved file list is missing, truncated, or changed; incomplete data was preserved." >&2
+        return 1
     fi
 
     actual_bytes=$(( $(wc -c < "$incomplete") ))
@@ -1313,6 +1378,17 @@ save_folderstamp() {
         return 1
     fi
 
+    local list_metadata list_bytes list_crc list_count
+    list_metadata="$(snapshot_file_list_metadata "$work_dir/files.list")" || {
+        echo "Could not calculate file-list integrity metadata." >&2
+        return 1
+    }
+    read -r list_bytes list_crc list_count <<< "$list_metadata"
+    if ! write_snapshot_checkpoint "$work_dir/checkpoint" "$root" "$mode" 0 0 "$list_bytes" "$list_crc" "$list_count"; then
+        echo "Could not commit file-list integrity metadata. Incomplete workspace preserved at: $incomplete" >&2
+        return 1
+    fi
+
     resume_folderstamp "$incomplete"
 }
 
@@ -1374,23 +1450,25 @@ resuming; the saved file list preserves the original traversal order.
 HELP
 }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-   print_help
-elif [[ "${1:-}" == "save" ]]; then
-   save_folderstamp "$1" "${2:-}"
-elif [[ "${1:-}" == "resume" ]]; then
-   if [[ -z "${2:-}" ]]; then
-       echo "resume requires the path to a folderstamp.incomplete file." >&2
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+       print_help
+    elif [[ "${1:-}" == "save" ]]; then
+       save_folderstamp "$1" "${2:-}"
+    elif [[ "${1:-}" == "resume" ]]; then
+       if [[ -z "${2:-}" ]]; then
+           echo "resume requires the path to a folderstamp.incomplete file." >&2
+           print_help >&2
+           exit 2
+       fi
+       resume_folderstamp "$2"
+    elif [[ "${1:-}" == "display" ]]; then
+       display "$1" "${2:-}"
+    else
+       echo "Unknown command: ${1:-<none>}" >&2
        print_help >&2
        exit 2
-   fi
-   resume_folderstamp "$2"
-elif [[ "${1:-}" == "display" ]]; then
-   display "$1" "${2:-}"
-else
-   echo "Unknown command: ${1:-<none>}" >&2
-   print_help >&2
-   exit 2
+    fi
 fi
 
 #-to fix:     if [ "$2" = "--hash" ];then
