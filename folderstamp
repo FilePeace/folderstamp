@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-FOLDERSTAMP_VERSION="r6.1"
+FOLDERSTAMP_VERSION="r6.2"
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -1103,6 +1103,7 @@ snapshot_file_list_metadata() {
     bytes="$(wc -c < "$list_file")" || return 1
     bytes="${bytes//[[:space:]]/}"
     read -r crc _ < <(cksum < "$list_file") || return 1
+    [[ "$crc" =~ ^[0-9]+$ ]] || return 1
 
     count=0
     while IFS= read -r -d '' _entry; do
@@ -1214,9 +1215,16 @@ resume_folderstamp() {
     IFS= read -r -d '' saved_mode <&9 || { exec 9<&-; echo "Invalid checkpoint mode." >&2; return 1; }
     IFS= read -r -d '' saved_processed <&9 || { exec 9<&-; echo "Invalid checkpoint count." >&2; return 1; }
     IFS= read -r -d '' saved_bytes <&9 || { exec 9<&-; echo "Invalid checkpoint size." >&2; return 1; }
-    IFS= read -r -d '' saved_list_bytes <&9 || { exec 9<&-; echo "Invalid manifest size in checkpoint." >&2; return 1; }
-    IFS= read -r -d '' saved_list_crc <&9 || { exec 9<&-; echo "Invalid manifest checksum in checkpoint." >&2; return 1; }
-    IFS= read -r -d '' saved_list_count <&9 || { exec 9<&-; echo "Invalid manifest count in checkpoint." >&2; return 1; }
+    if ! IFS= read -r -d '' saved_list_bytes <&9; then
+        # Older r6.1 checkpoints have only four fields. They can be upgraded
+        # safely only while no snapshot entry has been committed.
+        saved_list_bytes="pending"
+        saved_list_crc="pending"
+        saved_list_count="pending"
+    else
+        IFS= read -r -d '' saved_list_crc <&9 || { exec 9<&-; echo "Invalid manifest checksum in checkpoint." >&2; return 1; }
+        IFS= read -r -d '' saved_list_count <&9 || { exec 9<&-; echo "Invalid manifest count in checkpoint." >&2; return 1; }
+    fi
     exec 9<&-
 
     if [[ ! "$saved_processed" =~ ^[0-9]+$ || ! "$saved_bytes" =~ ^[0-9]+$ ]]; then
